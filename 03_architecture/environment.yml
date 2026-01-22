@@ -1,0 +1,76 @@
+# AI Co-Scientist Conda Environment
+# Create: conda env create -f environment.yml
+# Activate: conda activate coscientist
+
+name: coscientist
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.11
+  - pip
+
+  # Core Data & Validation
+  - pydantic>=2.0
+
+  # Database (Production)
+  - sqlalchemy>=2.0
+  - asyncpg
+  - psycopg2
+  - redis-py
+
+  # Scientific Computing
+  - networkx          # Proximity graph computation
+  - scikit-learn      # Clustering, similarity metrics
+  - numpy
+  - pandas
+
+  # Visualization
+  - plotly            # Elo rating charts, tournament visualization
+  - matplotlib        # Static plots
+
+  # PDF Processing
+  - pypdf
+
+  # Async
+  - aiohttp
+  - httpx
+
+  # Development & Testing
+  - jupyterlab        # Interactive agent testing
+  - ipywidgets        # Jupyter widgets for plotly
+  - pytest
+  - pytest-asyncio
+
+  # Pip-only packages
+  - pip:
+    # LLM & Agent Framework
+    - langgraph>=0.2
+    - langchain>=0.3
+    - langchain-anthropic      # Claude integration
+    - langchain-google-genai   # Gemini integration
+    - litellm                  # Unified LLM interface (optional)
+
+    # Search & RAG
+    - tavily-python            # Web search API
+    - pymupdf                  # PDF parsing (alternative to pypdf)
+
+    # Vector Storage
+    # Option 1: Lightweight for prototyping (no Docker needed)
+    - chromadb                 # File-based vector DB, easy setup
+    - faiss-cpu                # Fast similarity search
+    # Option 2: Production (requires PostgreSQL)
+    - pgvector                 # PostgreSQL vector extension
+
+    # Embeddings
+    - sentence-transformers    # Local embeddings option
+
+    # API Framework
+    - fastapi
+    - uvicorn[standard]
+
+    # Utilities
+    - python-dotenv
+    - tenacity                 # Retry logic
+    - structlog                # Structured logging
