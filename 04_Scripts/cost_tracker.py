@@ -15,8 +15,10 @@ from threading import Lock
 
 # Pricing as of Jan 2026 (USD per 1M tokens)
 # Update these when pricing changes
-# Note: Gemini 3 Pro has tiered pricing for prompts >200k tokens (higher rates)
 MODEL_PRICING = {
+    # =========================================================================
+    # GOOGLE GEMINI MODELS
+    # =========================================================================
     # Gemini 3 Pro Preview (prompts ≤200k tokens)
     # For >200k: input=$4.00, output=$18.00
     "gemini-3-pro-preview": {"input": 2.00, "output": 12.00},
@@ -34,7 +36,38 @@ MODEL_PRICING = {
     "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
     "gemini-2.0-flash-exp": {"input": 0.10, "output": 0.40},
 
-    # Claude models (if using Anthropic API)
+    # =========================================================================
+    # OPENAI GPT-5 MODELS
+    # =========================================================================
+    # GPT-5.2 (premium)
+    "gpt-5.2": {"input": 1.75, "output": 14.00},
+    "gpt-5.2-chat-latest": {"input": 1.75, "output": 14.00},
+    "gpt-5.2-codex": {"input": 1.75, "output": 14.00},
+
+    # GPT-5.1 (best quality for budget)
+    "gpt-5.1": {"input": 1.25, "output": 10.00},
+    "gpt-5.1-chat-latest": {"input": 1.25, "output": 10.00},
+    "gpt-5.1-codex": {"input": 1.25, "output": 10.00},
+    "gpt-5.1-codex-max": {"input": 1.25, "output": 10.00},
+
+    # GPT-5 (stable)
+    "gpt-5": {"input": 1.25, "output": 10.00},
+    "gpt-5-chat-latest": {"input": 1.25, "output": 10.00},
+    "gpt-5-codex": {"input": 1.25, "output": 10.00},
+
+    # GPT-5-mini (balanced cost)
+    "gpt-5-mini": {"input": 0.25, "output": 2.00},
+
+    # GPT-5-nano (cheapest)
+    "gpt-5-nano": {"input": 0.05, "output": 0.40},
+
+    # GPT-5 Pro (expensive - not recommended for budget)
+    "gpt-5.2-pro": {"input": 21.00, "output": 168.00},
+    "gpt-5-pro": {"input": 15.00, "output": 120.00},
+
+    # =========================================================================
+    # ANTHROPIC CLAUDE MODELS
+    # =========================================================================
     "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
     "claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
     "claude-3-5-haiku-20241022": {"input": 0.80, "output": 4.00},
