@@ -41,6 +41,12 @@ This repository contains academic papers and reference materials documenting Goo
 
   - `schemas.py` - Pydantic data models defining all system data structures
   - `logic.md` - System flow, supervisor logic, and agent orchestration documentation
+  - `environment.yml` - Conda environment with all dependencies
+  - `.env.example` - Environment variables template (API keys, model config, budget)
+
+- `04_Scripts/` - Utility scripts and tools
+
+  - `cost_tracker.py` - Token usage and cost tracking with budget limits
 
 ## AI Co-scientist System Architecture
 
@@ -176,6 +182,47 @@ The schemas file defines 27 Pydantic models representing all data structures in 
 1. **Drug Repurposing (AML)** - Identified candidates like KIRA6 showing IC50 as low as 13 nM
 2. **Novel Target Discovery (Liver Fibrosis)** - Proposed epigenetic targets validated in human hepatic organoids
 3. **Antimicrobial Resistance (cf-PICIs)** - Independently recapitulated unpublished experimental findings
+
+## Technology Stack
+
+| Component | Tool |
+|-----------|------|
+| Agent Framework | LangGraph |
+| LLM Provider | Google Gemini (primary), Anthropic Claude (optional) |
+| Data Validation | Pydantic |
+| Web Search | Tavily API |
+| Vector Storage | ChromaDB (prototype) / pgvector (production) |
+| Database | PostgreSQL + Redis |
+| Backend API | FastAPI |
+
+## Environment Setup
+
+```bash
+# Create conda environment
+conda env create -f 03_Architecture/environment.yml
+conda activate coscientist
+
+# Configure API keys
+cp 03_Architecture/.env.example 03_Architecture/.env
+# Edit .env with your API keys
+```
+
+## Cost Tracking
+
+The system includes a cost tracker (`04_Scripts/cost_tracker.py`) with:
+- Hard budget limit (default: $50 AUD)
+- Per-agent token and cost tracking
+- Persistent storage across sessions
+- `BudgetExceededError` when limit reached
+
+```python
+from cost_tracker import get_tracker
+
+tracker = get_tracker(budget_aud=50.0)
+tracker.check_budget()  # Raises if over budget
+tracker.add_usage("generation", "gemini-3-pro-preview", input_tokens, output_tokens)
+tracker.print_summary()
+```
 
 ## Working with This Repository
 
