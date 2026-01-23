@@ -837,6 +837,15 @@ class SyncInMemoryStorage:
             asyncio.set_event_loop(loop)
         return loop.run_until_complete(self._async_storage.get_top_hypotheses(n))
 
+    def get_all_reviews(self) -> List[Review]:
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop.run_until_complete(self._async_storage.get_all_reviews())
+
     def clear_all(self) -> None:
         import asyncio
         try:

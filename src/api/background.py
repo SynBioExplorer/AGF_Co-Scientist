@@ -29,13 +29,14 @@ class BackgroundTaskManager:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
-        """Get or create the event loop."""
+        """Get the running event loop.
+
+        In FastAPI context, there should always be a running loop.
+        If not, we're being called from a sync context which is an error.
+        """
         if self._loop is None or self._loop.is_closed():
-            try:
-                self._loop = asyncio.get_running_loop()
-            except RuntimeError:
-                self._loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self._loop)
+            # Get the running loop from FastAPI's context
+            self._loop = asyncio.get_running_loop()
         return self._loop
 
     def start_sync_task(
