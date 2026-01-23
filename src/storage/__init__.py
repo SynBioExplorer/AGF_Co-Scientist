@@ -4,6 +4,7 @@ This module provides storage abstraction layer with multiple backends:
 - InMemoryStorage: For testing and development (Phase 1-3)
 - PostgreSQLStorage: For production with persistence (Phase 4+)
 - CachedStorage: PostgreSQL + Redis caching layer (Phase 4+)
+- AsyncStorageAdapter: Async-compatible adapter for supervisor orchestration
 
 Usage:
     from src.storage import get_storage, BaseStorage
@@ -28,6 +29,7 @@ Usage:
 from src.storage.base import BaseStorage
 from src.storage.memory import InMemoryStorage, SyncInMemoryStorage, storage
 from src.storage.factory import get_storage, create_and_connect_storage, StorageContext
+from src.storage.async_adapter import AsyncStorageAdapter, async_storage
 
 # Export all public classes and functions
 __all__ = [
@@ -36,6 +38,9 @@ __all__ = [
     # Implementations
     "InMemoryStorage",
     "SyncInMemoryStorage",
+    # Async adapter (Phase 4)
+    "AsyncStorageAdapter",
+    "async_storage",
     # Factory
     "get_storage",
     "create_and_connect_storage",

@@ -860,6 +860,9 @@ python test_phase2.py
 
 # Run Phase 3 test (Advanced Features)
 python test_phase3.py
+
+# Run Phase 4 test (Supervisor Components)
+python test_supervisor.py
 ```
 
 ### Configuration
@@ -878,6 +881,10 @@ Edit `03_architecture/.env` to configure:
 | [src/config.py](src/config.py) | Configuration management |
 | [src/graphs/workflow.py](src/graphs/workflow.py) | LangGraph orchestration |
 | [src/agents/](src/agents/) | All agent implementations |
+| [src/agents/supervisor.py](src/agents/supervisor.py) | Supervisor orchestrator |
+| [src/supervisor/task_queue.py](src/supervisor/task_queue.py) | Priority task queue |
+| [src/supervisor/statistics.py](src/supervisor/statistics.py) | Effectiveness tracking |
+| [src/storage/async_adapter.py](src/storage/async_adapter.py) | Async storage adapter |
 | [04_Scripts/cost_tracker.py](04_Scripts/cost_tracker.py) | Budget tracking |
 
 ### Viewing Cost Tracking
@@ -899,14 +906,247 @@ for hyp in top_hypotheses:
 
 ---
 
-## Next Steps: Phase 4
+## Phase 4: Supervisor & Task Orchestration ✅ IN PROGRESS (Jan 23, 2026)
 
-Phase 4 will add persistence, advanced orchestration, and production features:
+**Branch:** `phase4/supervisor`
+**Status:** Core supervisor components implemented, ready for integration testing.
 
-1. **Database Integration** - PostgreSQL for persistent storage, Redis for caching
-2. **Advanced Supervisor Agent** - Dynamic agent weighting and resource allocation
-3. **Scientist-in-the-loop Interface** - Chat API for human feedback
-4. **Safety Mechanisms** - Goal safety review, hypothesis safety checks
-5. **Checkpoint/Resume** - Save workflow state, resume from checkpoints
-6. **FastAPI Backend** - REST API for web interface
-7. **Vector Storage** - ChromaDB/pgvector for semantic search
+### Components Implemented
+
+#### 1. AsyncStorageAdapter ([src/storage/async_adapter.py](src/storage/async_adapter.py))
+
+Full async storage implementation matching the `BaseStorage` interface from the database agent:
+
+- **Connection Management:** `connect()`, `disconnect()`, `health_check()`
+- **Research Goals:** CRUD operations for research goals
+- **Hypotheses:** Store, retrieve, update, filter by goal/status, get top N by Elo
+- **Reviews:** Store reviews, filter by hypothesis/type
+- **Tournament Matches:** Store matches, calculate win rates
+- **Tournament State:** Save/retrieve tournament state per goal
+- **Proximity Graph:** Save/retrieve graphs, add edges, find similar hypotheses
+- **Meta-Review:** Save/retrieve meta-review critiques
+- **Research Overview:** Save/retrieve research overviews
+- **Agent Tasks:** Add/claim/update tasks for supervisor
+- **System Statistics:** Save statistics snapshots
+- **Context Memory:** Checkpoint save/restore for workflow resumption
+- **Scientist Feedback:** Store feedback items
+- **Chat Messages:** Store chat history
+- **Transactions:** No-op for in-memory (real implementation in database agent)
+
+#### 2. TaskQueue ([src/supervisor/task_queue.py](src/supervisor/task_queue.py))
+
+Priority-based task queue for agent coordination:
+
+- **Priority Ordering:** Higher priority tasks (10) execute before lower (1)
+- **FIFO Tiebreaking:** Equal priority tasks execute in insertion order
+- **Agent Filtering:** Get next task filtered by agent type
+- **Status Tracking:** pending → running → complete/failed
+- **Statistics:** Task counts by status and agent type
+- **Methods:**
+  - `add_task(task)` - Add task with priority
+  - `get_next_task(agent_type=None)` - Get highest priority pending task
+  - `peek_next_task()` - Peek without removing
+  - `update_task_status(task_id, status, result)` - Update status
+  - `get_pending_count()` / `get_running_count()` - Count by status
+  - `get_statistics()` / `get_statistics_by_agent()` - Queue stats
+
+#### 3. SupervisorStatistics ([src/supervisor/statistics.py](src/supervisor/statistics.py))
+
+Compute system metrics for resource allocation:
+
+- **Tournament Convergence:** Measure Elo rating stability (1 - std_dev/100)
+- **Generation Success Rate:** % of hypotheses passing initial review
+- **Evolution Improvement Rate:** % of evolved hypotheses with higher Elo than parent
+- **Method Effectiveness:** Average Elo by generation method, normalized
+- **Agent Workload:** Pending/completed tasks per agent type
+- **Quality Threshold Detection:** Check if average review quality meets threshold
+- **Weight Recommendations:** Dynamic weight adjustment based on effectiveness
+
+#### 4. SupervisorAgent ([src/agents/supervisor.py](src/agents/supervisor.py))
+
+Central orchestrator for the multi-agent system:
+
+**Execution Flow:**
+1. **Parse Research Goal** - Extract evaluation criteria, constraints via LLM
+2. **Initialize Task Queue** - Create initial generation tasks
+3. **Execution Loop:**
+   - Compute statistics
+   - Check terminal conditions (budget, convergence, quality)
+   - Adjust agent weights dynamically
+   - Execute tasks based on weights
+   - Save checkpoints
+4. **Generate Final Overview** - Trigger meta-review agent
+
+**Dynamic Weight Adjustment:**
+- Generation: Reduce if success rate < 50%
+- Reflection: Increase if review backlog > 5
+- Ranking: Reduce if convergence > 80%
+- Evolution: Disable if improvement rate < 30%
+
+**Terminal Conditions:**
+- Budget exhausted
+- Tournament converged (Elo ratings stable)
+- Quality threshold met
+- Maximum iterations reached
+
+**Task Creation:**
+- Automatically creates follow-up tasks (e.g., review after generation)
+- Creates tasks based on system state (hypotheses needing review, evolution candidates)
+
+**Checkpoint/Resume:**
+- Saves `ContextMemory` after each iteration
+- `resume_from_checkpoint()` continues from last saved state
+
+#### 5. Test Suite ([test_supervisor.py](test_supervisor.py))
+
+Comprehensive tests for all supervisor components:
+
+- **test_task_queue()** - Priority ordering, filtering, status tracking
+- **test_async_storage_adapter()** - All storage operations
+- **test_supervisor_statistics()** - Convergence, effectiveness metrics
+- **test_supervisor_agent_initialization()** - Agent setup, initial weights
+- **test_supervisor_terminal_conditions()** - Convergence detection
+
+### Files Created
+
+```
+src/
+├── supervisor/
+│   ├── __init__.py             # Package exports
+│   ├── task_queue.py           # Priority task queue
+│   └── statistics.py           # Effectiveness tracking
+├── storage/
+│   └── async_adapter.py        # Async storage adapter
+└── agents/
+    └── supervisor.py           # Supervisor agent
+
+test_supervisor.py              # Integration tests
+```
+
+### Files Modified
+
+- [src/storage/__init__.py](src/storage/__init__.py) - Export async adapter
+- [src/agents/__init__.py](src/agents/__init__.py) - Export SupervisorAgent
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    SupervisorAgent                               │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
+│  │  TaskQueue   │  │  Statistics  │  │  AsyncStorageAdapter │  │
+│  │  (Priority)  │  │  (Metrics)   │  │  (Persistence)       │  │
+│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        ▼                     ▼                     ▼
+┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+│  Generation  │    │  Reflection  │    │   Ranking    │
+│    Agent     │    │    Agent     │    │    Agent     │
+└──────────────┘    └──────────────┘    └──────────────┘
+        │                     │                     │
+        ▼                     ▼                     ▼
+┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+│  Evolution   │    │  Proximity   │    │  Meta-Review │
+│    Agent     │    │    Agent     │    │    Agent     │
+└──────────────┘    └──────────────┘    └──────────────┘
+```
+
+### Usage Example
+
+```python
+import asyncio
+from src.agents.supervisor import SupervisorAgent
+from src.storage.async_adapter import AsyncStorageAdapter
+from schemas import ResearchGoal
+
+async def main():
+    # Initialize storage and supervisor
+    storage = AsyncStorageAdapter()
+    await storage.connect()
+
+    supervisor = SupervisorAgent(storage)
+
+    # Create research goal
+    goal = ResearchGoal(
+        id="goal_001",
+        description="Identify novel drug targets for AML treatment",
+        constraints=["Must be clinically testable"],
+        preferences=["Prioritize safety"]
+    )
+
+    # Run orchestration (will use ~$5-10 AUD budget)
+    result = await supervisor.execute(
+        research_goal=goal,
+        max_iterations=10,
+        min_hypotheses=6,
+        quality_threshold=0.7,
+        convergence_threshold=0.9
+    )
+
+    print(result)
+    await storage.disconnect()
+
+asyncio.run(main())
+```
+
+### Integration with Database Agent
+
+The `AsyncStorageAdapter` implements the same interface as `BaseStorage` from the database agent. Once the database agent merges:
+
+1. Import `PostgreSQLStorage` from `src.storage.postgresql`
+2. Replace `AsyncStorageAdapter` with `PostgreSQLStorage` in `SupervisorAgent`
+3. Configure database connection in `.env`
+
+```python
+# After database agent merges:
+from src.storage.postgresql import PostgreSQLStorage
+
+storage = PostgreSQLStorage(connection_string=settings.database_url)
+supervisor = SupervisorAgent(storage)
+```
+
+### Running Tests
+
+```bash
+# Activate conda environment
+conda activate coscientist
+
+# Run supervisor tests
+python test_supervisor.py
+```
+
+### Current System Capabilities (Phase 4)
+
+As of Phase 4, the AI Co-Scientist can:
+
+✅ **Generate** hypotheses via literature exploration
+✅ **Review** hypotheses with multi-criteria scoring
+✅ **Rank** hypotheses via Elo-based tournaments
+✅ **Evolve** hypotheses through refinement strategies
+✅ **Cluster** similar hypotheses via proximity analysis
+✅ **Synthesize** feedback patterns via meta-review
+✅ **Orchestrate** all agents via Supervisor with dynamic weighting
+✅ **Track** system statistics and convergence
+✅ **Checkpoint** workflow state for resume
+✅ **Detect** terminal conditions (budget, convergence, quality)
+
+**New Architecture Components:**
+- Supervisor agent with task orchestration
+- Priority-based task queue
+- Agent effectiveness tracking
+- Async storage adapter (BaseStorage compatible)
+- Checkpoint/resume functionality
+
+---
+
+## Next Steps: Remaining Phase 4 Work
+
+Remaining Phase 4 features (to be implemented by other agents):
+
+1. **Database Integration** - PostgreSQL storage, Redis caching (Database Agent)
+2. **Safety Mechanisms** - Goal/hypothesis safety review (Safety Agent)
+3. **FastAPI Backend** - REST API for web interface (API Agent)
+4. **Scientist-in-the-loop** - Chat interface for human feedback (API Agent)
+5. **Vector Storage** - ChromaDB/pgvector for semantic search (Database Agent)
