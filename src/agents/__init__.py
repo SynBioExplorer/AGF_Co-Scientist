@@ -8,6 +8,7 @@ This module provides all specialized agents for the co-scientist system:
 - ProximityAgent: Builds similarity graphs for clustering
 - MetaReviewAgent: Synthesizes feedback patterns
 - SupervisorAgent: Orchestrates all agents
+- SafetyAgent: Reviews goals and hypotheses for safety concerns
 """
 
 from src.agents.base import BaseAgent
@@ -18,6 +19,7 @@ from src.agents.evolution import EvolutionAgent
 from src.agents.proximity import ProximityAgent
 from src.agents.meta_review import MetaReviewAgent
 from src.agents.supervisor import SupervisorAgent
+from src.agents.safety import SafetyAgent
 
 __all__ = [
     "BaseAgent",
@@ -28,4 +30,5 @@ __all__ = [
     "ProximityAgent",
     "MetaReviewAgent",
     "SupervisorAgent",
+    "SafetyAgent",
 ]
