@@ -72,5 +72,6 @@ dependencies:
 
     # Utilities
     - python-dotenv
+    - pydantic-settings        # Configuration management
     - tenacity                 # Retry logic
     - structlog                # Structured logging
