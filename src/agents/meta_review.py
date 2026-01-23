@@ -129,7 +129,8 @@ Respond with ONLY the JSON object, no additional text."""
         goal: str,
         top_hypotheses: List[Hypothesis],
         meta_review: MetaReviewCritique,
-        preferences: List[str] = None
+        preferences: List[str] = None,
+        research_goal_id: str = None
     ) -> ResearchOverview:
         """Generate comprehensive research overview
 
@@ -181,7 +182,8 @@ Based on this analysis, provide:
 
 Return ONLY a JSON object:
 {{
-    "summary": "Comprehensive summary of findings",
+    "executive_summary": "Comprehensive 2-3 paragraph summary of key findings",
+    "current_knowledge_boundary": "What we currently know vs. what remains unknown in this research area",
     "research_directions": [
         {{
             "name": "Direction name",
@@ -223,7 +225,10 @@ Respond with ONLY the JSON object, no additional text."""
 
             # Build ResearchOverview
             overview = ResearchOverview(
-                summary=data["summary"],
+                id=generate_id("overview"),
+                research_goal_id=research_goal_id or goal,
+                executive_summary=data.get("executive_summary", ""),
+                current_knowledge_boundary=data.get("current_knowledge_boundary", ""),
                 research_directions=[
                     ResearchDirection(**d) for d in data.get("research_directions", [])
                 ],

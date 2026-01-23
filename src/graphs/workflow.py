@@ -254,7 +254,8 @@ class CoScientistWorkflow:
                 goal=state["research_goal"].description,
                 top_hypotheses=top_hypotheses,
                 meta_review=meta_review,
-                preferences=state["research_goal"].preferences
+                preferences=state["research_goal"].preferences,
+                research_goal_id=state["research_goal"].id
             )
 
             logger.info(

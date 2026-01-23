@@ -159,7 +159,8 @@ def test_phase3():
             goal=research_goal.description,
             top_hypotheses=top_hypotheses,
             meta_review=meta_review,
-            preferences=research_goal.preferences
+            preferences=research_goal.preferences,
+            research_goal_id=research_goal.id
         )
 
         logger.info(
