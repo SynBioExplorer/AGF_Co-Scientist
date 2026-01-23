@@ -138,7 +138,7 @@ Respond with ONLY the JSON object, no additional text."""
                 experimental_protocol=ExperimentalProtocol(**data["experimental_protocol"]),
                 literature_citations=[Citation(**c) for c in data.get("citations", [])],
                 generation_method=method,
-                elo_rating=1500.0  # Initial Elo
+                elo_rating=1200.0  # Initial Elo per Google paper (page 11)
             )
 
             self.logger.info(
