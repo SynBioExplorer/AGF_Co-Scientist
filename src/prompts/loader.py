@@ -117,14 +117,18 @@ class PromptManager:
     def format_meta_review_prompt(
         self,
         reviews: str,
-        tournament_results: str,
+        goal: str = "",
+        preferences: str = "",
+        instructions: str = "",
         **kwargs
     ) -> str:
         """Format meta-review agent prompt"""
         template = self.load_prompt("08_Meta_Review_Agent_Meta_Review_Generation.txt")
         return template.format(
             reviews=reviews,
-            tournament_results=tournament_results,
+            goal=goal,
+            preferences=preferences,
+            instructions=instructions,
             **kwargs
         )
 

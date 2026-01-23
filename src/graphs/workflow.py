@@ -1,16 +1,19 @@
-"""LangGraph workflow for Generate → Review → Rank pipeline (Phase 2)"""
+"""LangGraph workflow for Generate → Review → Rank → Evolve pipeline (Phase 3)"""
 
 from typing import Dict, Any
 from langgraph.graph import StateGraph, END
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent / "03_architecture"))
-from schemas import ResearchGoal, ReviewType
+from schemas import ResearchGoal, ReviewType, EvolutionStrategy
 
 from src.graphs.state import WorkflowState
 from src.agents.generation import GenerationAgent
 from src.agents.reflection import ReflectionAgent
 from src.agents.ranking import RankingAgent
+from src.agents.evolution import EvolutionAgent
+from src.agents.proximity import ProximityAgent
+from src.agents.meta_review import MetaReviewAgent
 from src.tournament.elo import TournamentRanker
 from src.storage.memory import storage
 import structlog
@@ -19,13 +22,17 @@ logger = structlog.get_logger()
 
 
 class CoScientistWorkflow:
-    """LangGraph workflow for AI Co-Scientist (Phase 2: Basic Pipeline)"""
+    """LangGraph workflow for AI Co-Scientist (Phase 3: Full Pipeline)"""
 
-    def __init__(self):
+    def __init__(self, enable_evolution: bool = False):
         self.generation_agent = GenerationAgent()
         self.reflection_agent = ReflectionAgent()
         self.ranking_agent = RankingAgent()
+        self.evolution_agent = EvolutionAgent()
+        self.proximity_agent = ProximityAgent()
+        self.meta_review_agent = MetaReviewAgent()
         self.ranker = TournamentRanker()
+        self.enable_evolution = enable_evolution
 
     def generate_node(self, state: WorkflowState) -> Dict[str, Any]:
         """Generate new hypotheses"""
@@ -169,6 +176,95 @@ class CoScientistWorkflow:
         """Increment iteration counter"""
         return {"iteration": state["iteration"] + 1}
 
+    def evolve_node(self, state: WorkflowState) -> Dict[str, Any]:
+        """Evolve top hypotheses (optional)"""
+        logger.info("Node: Evolve", iteration=state["iteration"])
+
+        if not self.enable_evolution:
+            logger.info("Evolution disabled, skipping")
+            return {"hypotheses": []}
+
+        # Get top hypotheses for evolution
+        top_hypotheses = storage.get_top_hypotheses(n=2)
+        evolved_hypotheses = []
+
+        for hypothesis in top_hypotheses:
+            # Get reviews for context
+            reviews = storage.get_reviews_for_hypothesis(hypothesis.id)
+
+            # Evolve with feasibility improvement strategy
+            evolved = self.evolution_agent.execute(
+                hypothesis=hypothesis,
+                strategy=EvolutionStrategy.FEASIBILITY,
+                reviews=reviews
+            )
+
+            storage.add_hypothesis(evolved)
+            evolved_hypotheses.append(evolved)
+
+            logger.info(
+                "Hypothesis evolved",
+                original_id=hypothesis.id,
+                evolved_id=evolved.id,
+                strategy="FEASIBILITY"
+            )
+
+        return {"hypotheses": evolved_hypotheses}
+
+    def finalize_node(self, state: WorkflowState) -> Dict[str, Any]:
+        """Finalize workflow with proximity analysis and meta-review"""
+        logger.info("Node: Finalize")
+
+        # Build proximity graph
+        all_hypotheses = storage.get_all_hypotheses()
+        if len(all_hypotheses) >= 2:
+            proximity_graph = self.proximity_agent.execute(
+                hypotheses=all_hypotheses,
+                research_goal_id=state["research_goal"].id,
+                similarity_threshold=0.6
+            )
+
+            logger.info(
+                "Proximity graph built",
+                num_edges=len(proximity_graph.edges),
+                num_clusters=len(proximity_graph.clusters)
+            )
+
+        # Generate meta-review
+        all_reviews = list(storage.reviews.values())
+        all_matches = storage.get_all_matches()
+
+        if all_reviews and all_matches:
+            meta_review = self.meta_review_agent.execute(
+                reviews=all_reviews,
+                matches=all_matches,
+                goal=state["research_goal"].description,
+                preferences=state["research_goal"].preferences
+            )
+
+            logger.info(
+                "Meta-review generated",
+                num_strengths=len(meta_review.recurring_strengths),
+                num_weaknesses=len(meta_review.recurring_weaknesses)
+            )
+
+            # Generate research overview
+            top_hypotheses = storage.get_top_hypotheses(n=5)
+            overview = self.meta_review_agent.generate_research_overview(
+                goal=state["research_goal"].description,
+                top_hypotheses=top_hypotheses,
+                meta_review=meta_review,
+                preferences=state["research_goal"].preferences
+            )
+
+            logger.info(
+                "Research overview generated",
+                num_directions=len(overview.research_directions),
+                num_contacts=len(overview.suggested_contacts)
+            )
+
+        return {}
+
     def build_graph(self) -> StateGraph:
         """Build the LangGraph workflow"""
 
@@ -179,23 +275,34 @@ class CoScientistWorkflow:
         workflow.add_node("generate", self.generate_node)
         workflow.add_node("review", self.review_node)
         workflow.add_node("rank", self.rank_node)
+        workflow.add_node("evolve", self.evolve_node)
         workflow.add_node("increment", self.increment_iteration)
+        workflow.add_node("finalize", self.finalize_node)
 
         # Add edges
         workflow.set_entry_point("generate")
         workflow.add_edge("generate", "review")
         workflow.add_edge("review", "rank")
-        workflow.add_edge("rank", "increment")
 
-        # Conditional edge: continue or end
+        # Optional evolution step
+        if self.enable_evolution:
+            workflow.add_edge("rank", "evolve")
+            workflow.add_edge("evolve", "increment")
+        else:
+            workflow.add_edge("rank", "increment")
+
+        # Conditional edge: continue or finalize
         workflow.add_conditional_edges(
             "increment",
             self.should_continue_node,
             {
                 "continue": "generate",
-                "end": END
+                "end": "finalize"
             }
         )
+
+        # End after finalization
+        workflow.add_edge("finalize", END)
 
         return workflow.compile()
 

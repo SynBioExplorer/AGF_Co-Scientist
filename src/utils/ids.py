@@ -30,3 +30,10 @@ def generate_task_id() -> str:
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     short_uuid = str(uuid.uuid4())[:8]
     return f"task_{timestamp}_{short_uuid}"
+
+
+def generate_id(prefix: str) -> str:
+    """Generate unique ID with custom prefix: {prefix}_<timestamp>_<uuid>"""
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    short_uuid = str(uuid.uuid4())[:8]
+    return f"{prefix}_{timestamp}_{short_uuid}"
