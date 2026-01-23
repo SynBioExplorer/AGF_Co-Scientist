@@ -117,7 +117,7 @@ def test_task_queue():
             id=f"stat_task_{i}",
             agent_type=AgentType.GENERATION if i % 2 == 0 else AgentType.REFLECTION,
             task_type="test",
-            priority=i,
+            priority=i + 1,  # Priority must be >= 1
             parameters={},
             status="pending"
         ))
