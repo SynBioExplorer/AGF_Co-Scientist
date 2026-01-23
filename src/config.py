@@ -2,7 +2,7 @@
 
 from pydantic_settings import BaseSettings
 from pathlib import Path
-from typing import Literal
+from typing import Literal, List
 
 
 class Settings(BaseSettings):
@@ -16,6 +16,13 @@ class Settings(BaseSettings):
 
     # LLM Provider Selection (change this to switch providers globally)
     llm_provider: Literal["google", "openai"] = "google"
+
+    # API Server Configuration
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
+    api_reload: bool = False
+    api_cors_origins: List[str] = ["*"]
+    api_debug: bool = False
 
     # Google Model Configuration
     google_generation_model: str = "gemini-3-pro-preview"
