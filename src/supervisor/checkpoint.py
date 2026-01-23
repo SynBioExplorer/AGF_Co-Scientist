@@ -73,7 +73,7 @@ class CheckpointManager:
         self.max_checkpoints = max_checkpoints
         self.logger = logger.bind(component="CheckpointManager")
 
-    def save_checkpoint(
+    async def save_checkpoint(
         self,
         goal_id: str,
         iteration: int,
@@ -104,11 +104,11 @@ class CheckpointManager:
             iteration=iteration
         )
 
-        # Gather current state from storage
-        all_hypotheses = self.storage.get_hypotheses_by_goal(goal_id)
-        all_matches = self.storage.get_all_matches(goal_id=goal_id)
-        all_reviews = self.storage.get_all_reviews()
-        proximity_graph = self.storage.get_proximity_graph(goal_id)
+        # Gather current state from storage (async calls)
+        all_hypotheses = await self.storage.get_hypotheses_by_goal(goal_id)
+        all_matches = await self.storage.get_all_matches(goal_id=goal_id)
+        all_reviews = await self.storage.get_all_reviews()
+        proximity_graph = await self.storage.get_proximity_graph(goal_id)
 
         # Build tournament state
         tournament_state = TournamentState(
@@ -154,11 +154,11 @@ class CheckpointManager:
         # Add checkpoint ID if ContextMemory supports it (may need schema update)
         # For now, we track by goal_id and iteration
 
-        # Save to storage
-        self.storage.save_checkpoint(context)
+        # Save to storage (async)
+        await self.storage.save_checkpoint(context)
 
-        # Prune old checkpoints if needed
-        self._prune_old_checkpoints(goal_id)
+        # Prune old checkpoints if needed (async)
+        await self._prune_old_checkpoints(goal_id)
 
         self.logger.info(
             "Checkpoint saved successfully",
@@ -170,7 +170,7 @@ class CheckpointManager:
 
         return context
 
-    def load_checkpoint(self, goal_id: str) -> Optional[ContextMemory]:
+    async def load_checkpoint(self, goal_id: str) -> Optional[ContextMemory]:
         """Load most recent checkpoint for research goal
 
         Args:
@@ -181,7 +181,7 @@ class CheckpointManager:
         """
         self.logger.info("Loading checkpoint", goal_id=goal_id)
 
-        checkpoint = self.storage.get_latest_checkpoint(goal_id)
+        checkpoint = await self.storage.get_latest_checkpoint(goal_id)
 
         if checkpoint:
             self.logger.info(
@@ -197,7 +197,7 @@ class CheckpointManager:
 
         return checkpoint
 
-    def resume_workflow(self, goal_id: str) -> Optional[int]:
+    async def resume_workflow(self, goal_id: str) -> Optional[int]:
         """Resume workflow from last checkpoint
 
         Loads the most recent checkpoint and returns the iteration number
@@ -209,7 +209,7 @@ class CheckpointManager:
         Returns:
             Iteration number of last checkpoint, or None if no checkpoint
         """
-        checkpoint = self.load_checkpoint(goal_id)
+        checkpoint = await self.load_checkpoint(goal_id)
 
         if not checkpoint:
             return None
@@ -239,7 +239,7 @@ class CheckpointManager:
         # Checkpoint at regular intervals
         return iteration % self.checkpoint_interval == 0
 
-    def get_checkpoint_history(self, goal_id: str) -> List[Dict[str, Any]]:
+    async def get_checkpoint_history(self, goal_id: str) -> List[Dict[str, Any]]:
         """Get summary of all checkpoints for a goal
 
         Args:
@@ -248,7 +248,7 @@ class CheckpointManager:
         Returns:
             List of checkpoint summaries (iteration, timestamp, stats)
         """
-        checkpoints = self.storage.get_all_checkpoints(goal_id)
+        checkpoints = await self.storage.get_all_checkpoints(goal_id)
 
         return [
             {
@@ -392,7 +392,7 @@ class CheckpointManager:
 
         return round(convergence, 3)
 
-    def _prune_old_checkpoints(self, goal_id: str) -> None:
+    async def _prune_old_checkpoints(self, goal_id: str) -> None:
         """Remove old checkpoints if over limit
 
         Keeps only the most recent max_checkpoints.
@@ -400,7 +400,7 @@ class CheckpointManager:
         Args:
             goal_id: Research goal ID
         """
-        checkpoints = self.storage.get_all_checkpoints(goal_id)
+        checkpoints = await self.storage.get_all_checkpoints(goal_id)
 
         if len(checkpoints) <= self.max_checkpoints:
             return

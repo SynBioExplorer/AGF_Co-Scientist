@@ -25,11 +25,11 @@ from src.api.models import (
     WorkflowConfigRequest,
 )
 from src.api.background import task_manager
-from src.storage.memory import storage
+from src.storage.async_adapter import async_storage as storage
 from src.graphs.workflow import CoScientistWorkflow
 from src.utils.ids import generate_id
 from src.utils.logging_config import setup_logging
-from schemas import ResearchGoal, HypothesisStatus
+from schemas import ResearchGoal, HypothesisStatus, ScientistFeedback
 import structlog
 
 # Setup logging
@@ -42,9 +42,11 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler for startup and shutdown"""
     # Startup
     logger.info("AI Co-Scientist API starting up")
+    await storage.connect()
     yield
     # Shutdown
     task_manager.shutdown()
+    await storage.disconnect()
     logger.info("AI Co-Scientist API shutdown complete")
 
 
@@ -77,10 +79,10 @@ def run_workflow(goal: ResearchGoal, max_iterations: int, enable_evolution: bool
     return workflow.run(research_goal=goal, max_iterations=max_iterations)
 
 
-def compute_statistics(goal_id: str) -> dict:
+async def compute_statistics(goal_id: str) -> dict:
     """Compute statistics for a research goal"""
-    hypotheses = storage.get_hypotheses_by_goal(goal_id)
-    all_matches = storage.get_all_matches()
+    hypotheses = await storage.get_hypotheses_by_goal(goal_id)
+    all_matches = await storage.get_all_matches()
     goal_matches = [
         m for m in all_matches
         if any(
@@ -122,7 +124,7 @@ async def health_check():
     """Check system health status"""
     # Simple health check - verify storage is accessible
     try:
-        storage.get_stats()
+        await storage.get_stats()
         storage_status = "connected"
         status = "healthy"
     except Exception:
@@ -170,7 +172,7 @@ async def submit_goal(
     )
 
     # Save to storage
-    storage.add_research_goal(goal)
+    await storage.add_research_goal(goal)
 
     # Start workflow in background
     task_id = task_manager.start_sync_task(
@@ -201,7 +203,7 @@ async def submit_goal(
 async def get_goal_status(goal_id: str):
     """Get the status and progress of a research goal"""
     # Get goal from storage
-    goal = storage.get_research_goal(goal_id)
+    goal = await storage.get_research_goal(goal_id)
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
 
@@ -224,7 +226,7 @@ async def get_goal_status(goal_id: str):
         status = "pending"
 
     # Get statistics
-    stats = compute_statistics(goal_id)
+    stats = await compute_statistics(goal_id)
 
     return GoalStatusResponse(
         goal_id=goal_id,
@@ -241,7 +243,7 @@ async def get_goal_status(goal_id: str):
 @app.get("/goals/{goal_id}/tasks", response_model=list[TaskStatusResponse], tags=["Goals"])
 async def get_goal_tasks(goal_id: str):
     """Get all background tasks for a research goal"""
-    goal = storage.get_research_goal(goal_id)
+    goal = await storage.get_research_goal(goal_id)
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
 
@@ -274,12 +276,12 @@ async def get_hypotheses(
 ):
     """Get paginated list of hypotheses for a research goal"""
     # Verify goal exists
-    goal = storage.get_research_goal(goal_id)
+    goal = await storage.get_research_goal(goal_id)
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
 
     # Get all hypotheses for goal
-    all_hypotheses = storage.get_hypotheses_by_goal(goal_id)
+    all_hypotheses = await storage.get_hypotheses_by_goal(goal_id)
 
     # Sort
     if sort_by == "elo":
@@ -306,15 +308,15 @@ async def get_hypotheses(
 async def get_hypothesis_detail(hypothesis_id: str):
     """Get detailed information about a specific hypothesis"""
     # Get hypothesis
-    hypothesis = storage.get_hypothesis(hypothesis_id)
+    hypothesis = await storage.get_hypothesis(hypothesis_id)
     if not hypothesis:
         raise HTTPException(status_code=404, detail="Hypothesis not found")
 
     # Get reviews
-    reviews = storage.get_reviews_for_hypothesis(hypothesis_id)
+    reviews = await storage.get_reviews_for_hypothesis(hypothesis_id)
 
     # Get tournament matches
-    matches = storage.get_matches_for_hypothesis(hypothesis_id)
+    matches = await storage.get_matches_for_hypothesis(hypothesis_id)
     wins = len([m for m in matches if m.winner_id == hypothesis_id])
     losses = len(matches) - wins
     win_rate = wins / len(matches) if matches else 0.0
@@ -324,7 +326,7 @@ async def get_hypothesis_detail(hypothesis_id: str):
     if hypothesis.parent_hypothesis_ids:
         parents = []
         for parent_id in hypothesis.parent_hypothesis_ids:
-            parent = storage.get_hypothesis(parent_id)
+            parent = await storage.get_hypothesis(parent_id)
             if parent:
                 parents.append({
                     "id": parent.id,
@@ -356,14 +358,14 @@ async def get_hypothesis_detail(hypothesis_id: str):
 async def submit_feedback(hypothesis_id: str, request: SubmitFeedbackRequest):
     """Submit scientist feedback on a hypothesis"""
     # Verify hypothesis exists
-    hypothesis = storage.get_hypothesis(hypothesis_id)
+    hypothesis = await storage.get_hypothesis(hypothesis_id)
     if not hypothesis:
         raise HTTPException(status_code=404, detail="Hypothesis not found")
 
     # Create feedback ID
     feedback_id = generate_id("feedback")
 
-    # Log feedback (storage for feedback not yet implemented)
+    # Log and store feedback
     logger.info(
         "Feedback received",
         feedback_id=feedback_id,
@@ -372,14 +374,14 @@ async def submit_feedback(hypothesis_id: str, request: SubmitFeedbackRequest):
         comments=request.comments[:100] if request.comments else None,
     )
 
-    # TODO: Store feedback when ScientistFeedback storage is added
-    # feedback = ScientistFeedback(
-    #     id=feedback_id,
-    #     hypothesis_id=hypothesis_id,
-    #     feedback_type="review",
-    #     content=request.comments,
-    # )
-    # storage.add_feedback(feedback)
+    # Store feedback in async storage
+    feedback = ScientistFeedback(
+        id=feedback_id,
+        hypothesis_id=hypothesis_id,
+        feedback_type="review",
+        content=request.comments or "",
+    )
+    await storage.add_feedback(feedback)
 
     return FeedbackResponse(
         status="feedback_received",
@@ -397,12 +399,12 @@ async def submit_feedback(hypothesis_id: str, request: SubmitFeedbackRequest):
 async def get_statistics(goal_id: str):
     """Get system statistics for a research goal"""
     # Verify goal exists
-    goal = storage.get_research_goal(goal_id)
+    goal = await storage.get_research_goal(goal_id)
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
 
     # Compute statistics
-    stats = compute_statistics(goal_id)
+    stats = await compute_statistics(goal_id)
 
     return StatisticsResponse(
         goal_id=goal_id,
@@ -428,7 +430,7 @@ async def get_research_overview(goal_id: str):
     by the Meta-review agent after the workflow completes.
     """
     # Verify goal exists
-    goal = storage.get_research_goal(goal_id)
+    goal = await storage.get_research_goal(goal_id)
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
 
@@ -441,7 +443,7 @@ async def get_research_overview(goal_id: str):
         )
 
     # Get top hypotheses
-    top_hypotheses = storage.get_top_hypotheses(n=10)
+    top_hypotheses = await storage.get_top_hypotheses(n=10)
     goal_hypotheses = [h for h in top_hypotheses if h.research_goal_id == goal_id][:5]
 
     if not goal_hypotheses:
@@ -450,22 +452,24 @@ async def get_research_overview(goal_id: str):
             detail="No hypotheses found for this goal"
         )
 
-    # Build overview response
+    # Build overview response with win rates
+    top_hypotheses_data = []
+    for i, h in enumerate(goal_hypotheses):
+        win_rate = await storage.get_hypothesis_win_rate(h.id)
+        top_hypotheses_data.append({
+            "rank": i + 1,
+            "id": h.id,
+            "title": h.title,
+            "summary": h.summary,
+            "elo_rating": h.elo_rating,
+            "win_rate": win_rate,
+        })
+
     return {
         "goal_id": goal_id,
         "goal_description": goal.description,
-        "top_hypotheses": [
-            {
-                "rank": i + 1,
-                "id": h.id,
-                "title": h.title,
-                "summary": h.summary,
-                "elo_rating": h.elo_rating,
-                "win_rate": storage.get_hypothesis_win_rate(h.id),
-            }
-            for i, h in enumerate(goal_hypotheses)
-        ],
-        "statistics": compute_statistics(goal_id),
+        "top_hypotheses": top_hypotheses_data,
+        "statistics": await compute_statistics(goal_id),
     }
 
 

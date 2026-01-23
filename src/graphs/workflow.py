@@ -231,7 +231,7 @@ class CoScientistWorkflow:
             )
 
         # Generate meta-review
-        all_reviews = list(storage.reviews.values())
+        all_reviews = storage.get_all_reviews()
         all_matches = storage.get_all_matches()
 
         if all_reviews and all_matches:

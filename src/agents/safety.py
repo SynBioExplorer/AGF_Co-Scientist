@@ -45,7 +45,7 @@ class SafetyAgent(BaseAgent):
         )
         super().__init__(llm_client, "SafetyAgent")
 
-    def execute(self, **kwargs) -> Dict:
+    async def execute(self, **kwargs) -> Dict:
         """Execute safety review based on provided parameters
 
         Args:
@@ -56,15 +56,15 @@ class SafetyAgent(BaseAgent):
             Safety assessment dictionary
         """
         if "goal" in kwargs:
-            return self.review_goal(kwargs["goal"])
+            return await self.review_goal(kwargs["goal"])
         elif "hypothesis" in kwargs:
-            return self.review_hypothesis(kwargs["hypothesis"])
+            return await self.review_hypothesis(kwargs["hypothesis"])
         else:
             raise SafetyReviewError(
                 "SafetyAgent.execute() requires either 'goal' or 'hypothesis' parameter"
             )
 
-    def review_goal(self, goal: ResearchGoal) -> Dict:
+    async def review_goal(self, goal: ResearchGoal) -> Dict:
         """Review research goal for ethical and safety concerns
 
         Args:
@@ -137,8 +137,8 @@ Return ONLY a JSON object:
 
 Respond with ONLY the JSON object, no additional text."""
 
-        # Invoke LLM
-        response = self.llm_client.invoke(prompt)
+        # Invoke LLM asynchronously
+        response = await self.llm_client.ainvoke(prompt)
 
         # Parse response
         try:
@@ -174,7 +174,7 @@ Respond with ONLY the JSON object, no additional text."""
                 f"Failed to parse goal safety review: {e}\nResponse: {response[:500]}"
             )
 
-    def review_hypothesis(self, hypothesis: Hypothesis) -> Dict:
+    async def review_hypothesis(self, hypothesis: Hypothesis) -> Dict:
         """Review hypothesis for experimental safety risks
 
         Args:
@@ -257,8 +257,8 @@ Return ONLY a JSON object:
 
 Respond with ONLY the JSON object, no additional text."""
 
-        # Invoke LLM
-        response = self.llm_client.invoke(prompt)
+        # Invoke LLM asynchronously
+        response = await self.llm_client.ainvoke(prompt)
 
         # Parse response
         try:

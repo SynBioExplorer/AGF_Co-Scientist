@@ -103,6 +103,8 @@ class PromptManager:
         self,
         hypothesis: str,
         strategy: str = "feasibility",  # "feasibility" or "out_of_box"
+        goal: str = "",
+        preferences: str = "",
         **kwargs
     ) -> str:
         """Format evolution agent prompt"""
@@ -113,6 +115,8 @@ class PromptManager:
 
         return template.format(
             hypothesis=hypothesis,
+            goal=goal or "Improve the hypothesis",
+            preferences=preferences or "Novelty, correctness, testability, and feasibility",
             **kwargs
         )
 

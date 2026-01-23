@@ -569,7 +569,9 @@ Respond with ONLY the JSON object."""
             method = GenerationMethod(params.get("method", "literature_exploration"))
             use_web_search = params.get("use_web_search", False)
 
-            hypothesis = agent.execute(
+            # Run sync agent in thread pool to avoid blocking event loop
+            hypothesis = await asyncio.to_thread(
+                agent.execute,
                 research_goal=research_goal,
                 method=method,
                 use_web_search=use_web_search
@@ -595,7 +597,9 @@ Respond with ONLY the JSON object."""
             hypothesis = await self.storage.get_hypothesis(hypothesis_id)
             if hypothesis:
                 review_type = ReviewType(params.get("review_type", "initial"))
-                review = agent.execute(
+                # Run sync agent in thread pool to avoid blocking event loop
+                review = await asyncio.to_thread(
+                    agent.execute,
                     hypothesis=hypothesis,
                     goal=research_goal.description,
                     preferences=research_goal.preferences,
@@ -620,7 +624,9 @@ Respond with ONLY the JSON object."""
                 reviews_a = await self.storage.get_reviews_for_hypothesis(h_a_id)
                 reviews_b = await self.storage.get_reviews_for_hypothesis(h_b_id)
 
-                match = agent.execute(
+                # Run sync agent in thread pool to avoid blocking event loop
+                match = await asyncio.to_thread(
+                    agent.execute,
                     hypothesis_a=h_a,
                     hypothesis_b=h_b,
                     review_a=reviews_a[0] if reviews_a else None,
@@ -645,7 +651,9 @@ Respond with ONLY the JSON object."""
             hypothesis = await self.storage.get_hypothesis(hypothesis_id)
             if hypothesis:
                 strategy = EvolutionStrategy(params.get("strategy", "feasibility"))
-                evolved = agent.execute(
+                # Run sync agent in thread pool to avoid blocking event loop
+                evolved = await asyncio.to_thread(
+                    agent.execute,
                     hypothesis=hypothesis,
                     strategy=strategy,
                     research_goal=research_goal
@@ -663,7 +671,11 @@ Respond with ONLY the JSON object."""
                 research_goal.id
             )
             if len(hypotheses) >= 2:
-                graph = agent.execute(hypotheses=hypotheses[:10])
+                # Run sync agent in thread pool to avoid blocking event loop
+                graph = await asyncio.to_thread(
+                    agent.execute,
+                    hypotheses=hypotheses[:10]
+                )
                 await self.storage.save_proximity_graph(graph)
                 result = {
                     "num_edges": len(graph.edges),
@@ -674,7 +686,9 @@ Respond with ONLY the JSON object."""
             reviews = await self.storage.get_all_reviews(research_goal.id)
             matches = await self.storage.get_all_matches(research_goal.id)
 
-            meta_review = agent.execute(
+            # Run sync agent in thread pool to avoid blocking event loop
+            meta_review = await asyncio.to_thread(
+                agent.execute,
                 reviews=reviews,
                 matches=matches,
                 goal=research_goal.description,
@@ -790,10 +804,11 @@ Respond with ONLY the JSON object."""
             # Get or generate meta-review
             meta_review = await self.storage.get_meta_review(research_goal.id)
             if not meta_review:
-                # Generate one
+                # Generate one (run sync agent in thread pool)
                 reviews = await self.storage.get_all_reviews(research_goal.id)
                 matches = await self.storage.get_all_matches(research_goal.id)
-                meta_review = agent.execute(
+                meta_review = await asyncio.to_thread(
+                    agent.execute,
                     reviews=reviews,
                     matches=matches,
                     goal=research_goal.description,
@@ -802,8 +817,9 @@ Respond with ONLY the JSON object."""
                 meta_review.research_goal_id = research_goal.id
                 await self.storage.save_meta_review(meta_review)
 
-            # Generate research overview
-            overview = agent.generate_research_overview(
+            # Generate research overview (run sync agent in thread pool)
+            overview = await asyncio.to_thread(
+                agent.generate_research_overview,
                 goal=research_goal.description,
                 top_hypotheses=top_hypotheses,
                 meta_review=meta_review,
