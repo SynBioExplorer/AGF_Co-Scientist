@@ -12,6 +12,7 @@ from src.llm.factory import get_llm_client
 from src.prompts.loader import prompt_manager
 from src.utils.ids import generate_hypothesis_id
 from src.utils.errors import CoScientistError
+from src.utils.web_search import get_search_client
 from src.config import settings
 import json
 
@@ -29,22 +30,62 @@ class GenerationAgent(BaseAgent):
     def execute(
         self,
         research_goal: ResearchGoal,
-        method: GenerationMethod = GenerationMethod.LITERATURE_EXPLORATION
+        method: GenerationMethod = GenerationMethod.LITERATURE_EXPLORATION,
+        use_web_search: bool = False
     ) -> Hypothesis:
-        """Generate a hypothesis"""
+        """Generate a hypothesis
+
+        Args:
+            research_goal: Research goal to address
+            method: Generation method (literature or debate)
+            use_web_search: Whether to perform web search for literature context
+
+        Returns:
+            Generated Hypothesis
+        """
 
         self.log_execution(
             task="hypothesis_generation",
             goal=research_goal.description[:100],
-            method=method.value
+            method=method.value,
+            web_search=use_web_search
         )
+
+        # Optionally search for literature
+        articles_with_reasoning = ""
+        if use_web_search and settings.tavily_api_key:
+            try:
+                search_client = get_search_client()
+                results = search_client.search_scientific_literature(
+                    query=research_goal.description,
+                    max_results=5
+                )
+
+                articles_with_reasoning = "\n\n".join([
+                    f"**Article {i+1}:** {r['title']}\n"
+                    f"URL: {r['url']}\n"
+                    f"Content: {r['content'][:300]}..."
+                    for i, r in enumerate(results) if r['url']  # Skip AI summary
+                ])
+
+                self.logger.info(
+                    "Literature search completed",
+                    num_articles=len(results)
+                )
+
+            except Exception as e:
+                self.logger.warning(
+                    "Literature search failed, proceeding without",
+                    error=str(e)
+                )
 
         # Format prompt
         method_str = "literature" if method == GenerationMethod.LITERATURE_EXPLORATION else "debate"
         prompt = prompt_manager.format_generation_prompt(
             goal=research_goal.description,
             preferences=research_goal.preferences,
-            method=method_str
+            method=method_str,
+            articles_with_reasoning=articles_with_reasoning
         )
 
         # Add structured output instruction
