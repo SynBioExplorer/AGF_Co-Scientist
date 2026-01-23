@@ -108,64 +108,13 @@ uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 
 ## Phase Documentation
 
-### Phase 1: Foundation
-**Documentation:** [03_architecture/Phase1/README_PHASE1.md](03_architecture/Phase1/README_PHASE1.md)
-
-| Component | Description | Doc |
-|-----------|-------------|-----|
-| Configuration | Pydantic settings, env loading | [PHASE1_CONFIG.md](03_architecture/Phase1/PHASE1_CONFIG.md) |
-| Utilities | IDs, logging, errors | [PHASE1_UTILITIES.md](03_architecture/Phase1/PHASE1_UTILITIES.md) |
-| LLM Clients | Google/OpenAI abstraction | [PHASE1_LLM_CLIENTS.md](03_architecture/Phase1/PHASE1_LLM_CLIENTS.md) |
-| Prompts | Template loading | [PHASE1_PROMPTS.md](03_architecture/Phase1/PHASE1_PROMPTS.md) |
-| Generation Agent | First working agent | [PHASE1_GENERATION_AGENT.md](03_architecture/Phase1/PHASE1_GENERATION_AGENT.md) |
-
-### Phase 2: Core Pipeline
-**Documentation:** [03_architecture/Phase2/README_PHASE2.md](03_architecture/Phase2/README_PHASE2.md)
-
-| Component | Description | Doc |
-|-----------|-------------|-----|
-| LLM Factory | Provider switching pattern | [PHASE2_LLM_FACTORY.md](03_architecture/Phase2/PHASE2_LLM_FACTORY.md) |
-| Reflection Agent | Hypothesis review & scoring | [PHASE2_REFLECTION_AGENT.md](03_architecture/Phase2/PHASE2_REFLECTION_AGENT.md) |
-| Ranking Agent | Tournament comparisons | [PHASE2_RANKING_AGENT.md](03_architecture/Phase2/PHASE2_RANKING_AGENT.md) |
-| Elo System | Rating calculations | [PHASE2_ELO_SYSTEM.md](03_architecture/Phase2/PHASE2_ELO_SYSTEM.md) |
-| Storage | In-memory state | [PHASE2_STORAGE.md](03_architecture/Phase2/PHASE2_STORAGE.md) |
-| Workflow | LangGraph orchestration | [PHASE2_WORKFLOW.md](03_architecture/Phase2/PHASE2_WORKFLOW.md) |
-
-### Phase 3: Advanced Features
-**Documentation:** [03_architecture/Phase3/README_PHASE3.md](03_architecture/Phase3/README_PHASE3.md)
-
-| Component | Description | Doc |
-|-----------|-------------|-----|
-| Evolution Agent | 7 refinement strategies | [PHASE3_EVOLUTION_AGENT.md](03_architecture/Phase3/PHASE3_EVOLUTION_AGENT.md) |
-| Proximity Agent | Similarity clustering | [PHASE3_PROXIMITY_AGENT.md](03_architecture/Phase3/PHASE3_PROXIMITY_AGENT.md) |
-| Meta-review Agent | Feedback synthesis | [PHASE3_META_REVIEW_AGENT.md](03_architecture/Phase3/PHASE3_META_REVIEW_AGENT.md) |
-| Web Search | Tavily integration | [PHASE3_WEB_SEARCH.md](03_architecture/Phase3/PHASE3_WEB_SEARCH.md) |
-| JSON Parser | Robust LLM parsing | [PHASE3_JSON_PARSER.md](03_architecture/Phase3/PHASE3_JSON_PARSER.md) |
-| Bug Fixes | Critical fixes applied | [PHASE3_BUG_FIXES.md](03_architecture/Phase3/PHASE3_BUG_FIXES.md) |
-
-### Phase 4: Production Infrastructure
-**Documentation:** [03_architecture/Phase4/README_PHASE4.md](03_architecture/Phase4/README_PHASE4.md)
-
-| Component | Description | Doc |
-|-----------|-------------|-----|
-| Database | PostgreSQL + Redis | [PHASE4_AGENT_DATABASE.md](03_architecture/Phase4/PHASE4_AGENT_DATABASE.md) |
-| Supervisor | Task orchestration | [PHASE4_AGENT_SUPERVISOR.md](03_architecture/Phase4/PHASE4_AGENT_SUPERVISOR.md) |
-| Safety | Goal/hypothesis review | [PHASE4_AGENT_SAFETY.md](03_architecture/Phase4/PHASE4_AGENT_SAFETY.md) |
-| API | FastAPI backend | [PHASE4_AGENT_API.md](03_architecture/Phase4/PHASE4_AGENT_API.md) |
-| Parallel Workflow | Git worktrees guide | [PHASE4_PARALLEL_WORKFLOW.md](03_architecture/Phase4/PHASE4_PARALLEL_WORKFLOW.md) |
-
-### Phase 5: Deployment & Advanced (Planned)
-**Documentation:** [03_architecture/Phase5/README_PHASE5.md](03_architecture/Phase5/README_PHASE5.md)
-
-| Component | Description | Doc |
-|-----------|-------------|-----|
-| 5A Vector Storage | ChromaDB/pgvector | [PHASE5A_VECTOR_STORAGE.md](03_architecture/Phase5/PHASE5A_VECTOR_STORAGE.md) |
-| 5B Tool Integration | AlphaFold, PubMed, DrugBank | [PHASE5B_TOOL_INTEGRATION.md](03_architecture/Phase5/PHASE5B_TOOL_INTEGRATION.md) |
-| 5C Literature | PDF parsing, citations | [PHASE5C_LITERATURE_PROCESSING.md](03_architecture/Phase5/PHASE5C_LITERATURE_PROCESSING.md) |
-| 5D Frontend | React dashboard | [PHASE5D_FRONTEND_DASHBOARD.md](03_architecture/Phase5/PHASE5D_FRONTEND_DASHBOARD.md) |
-| 5E Authentication | OAuth2/JWT, RBAC | [PHASE5E_AUTHENTICATION.md](03_architecture/Phase5/PHASE5E_AUTHENTICATION.md) |
-| 5F Observability | Prometheus, Grafana | [PHASE5F_OBSERVABILITY.md](03_architecture/Phase5/PHASE5F_OBSERVABILITY.md) |
-| 5G Deployment | Docker, AWS ECS | [PHASE5G_DEPLOYMENT.md](03_architecture/Phase5/PHASE5G_DEPLOYMENT.md) |
+| Phase | Summary | Docs |
+|-------|---------|------|
+| **Phase 1** | Config, LLM clients, Generation agent | [03_architecture/Phase1/](03_architecture/Phase1/) |
+| **Phase 2** | Reflection, Ranking, Elo, LangGraph workflow | [03_architecture/Phase2/](03_architecture/Phase2/) |
+| **Phase 3** | Evolution, Proximity, Meta-review, Tavily search | [03_architecture/Phase3/](03_architecture/Phase3/) |
+| **Phase 4** | PostgreSQL, Redis, Supervisor, Safety, FastAPI | [03_architecture/Phase4/](03_architecture/Phase4/) |
+| **Phase 5** | Vector storage, tools, frontend, auth, deployment | [03_architecture/Phase5/](03_architecture/Phase5/) |
 
 ---
 
@@ -212,22 +161,6 @@ BUDGET_AUD=50.0
 
 ---
 
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/goals` | POST | Submit research goal |
-| `/goals/{id}` | GET | Get goal status |
-| `/hypotheses` | GET | List hypotheses |
-| `/hypotheses/{id}` | GET | Get hypothesis details |
-| `/feedback` | POST | Submit scientist feedback |
-| `/statistics/{goal_id}` | GET | Get goal statistics |
-| `/chat` | POST | Chat with system |
-| `/chat/{goal_id}/history` | GET | Get chat history |
-
----
-
 ## Data Schemas
 
 All 27 Pydantic models defined in [03_architecture/schemas.py](03_architecture/schemas.py):
@@ -242,54 +175,8 @@ All 27 Pydantic models defined in [03_architecture/schemas.py](03_architecture/s
 
 ---
 
-## Working with This Repository
+## Notes
 
-- Hypotheses must be grounded in prior literature
-- Safety mechanisms review all goals and hypotheses
-- All outputs require human expert validation
-- System is model-agnostic (portable to other LLMs)
-- Cost tracking enforces budget limits
+- All hypotheses require human expert validation
+- Cost tracking enforces budget limits ($50 AUD default)
 
----
-
-## Phase 4 Bug Fixes (Jan 2026)
-
-Critical async/await and integration issues identified during code review and fixed:
-
-### CRITICAL Fixes
-
-| Issue | File | Fix |
-|-------|------|-----|
-| **CheckpointManager missing async/await** | [src/supervisor/checkpoint.py](src/supervisor/checkpoint.py) | Converted 5 methods to `async def`, added `await` to all storage calls |
-| **SupervisorAgent blocking event loop** | [src/agents/supervisor.py](src/agents/supervisor.py) | Wrapped all 6 sync agent `execute()` calls with `asyncio.to_thread()` |
-
-### HIGH Priority Fixes
-
-| Issue | File | Fix |
-|-------|------|-----|
-| **API using sync storage** | [src/api/main.py](src/api/main.py) | Switched to `AsyncStorageAdapter`, added `await` to all storage calls |
-| **SafetyAgent sync methods** | [src/agents/safety.py](src/agents/safety.py) | Converted to async interface, use `ainvoke()` for LLM calls |
-
-### MEDIUM Priority Fixes
-
-| Issue | File | Fix |
-|-------|------|-----|
-| **BackgroundTaskManager event loop** | [src/api/background.py](src/api/background.py) | Simplified to use `asyncio.get_running_loop()` |
-| **Feedback not persisted** | [src/api/main.py](src/api/main.py) | Implemented `ScientistFeedback` storage in `/feedback` endpoint |
-| **SyncInMemoryStorage missing method** | [src/storage/memory.py](src/storage/memory.py) | Added `get_all_reviews()` method for backward compatibility |
-| **Evolution prompt missing parameters** | [src/prompts/loader.py](src/prompts/loader.py) | Added `goal` and `preferences` defaults to `format_evolution_prompt()` |
-
-### Verification
-
-All fixes verified with:
-- `python test_supervisor.py` - **ALL TESTS PASSED**
-- `python test_phase1.py` - **PASSED**
-- `python test_phase3.py` - Workflow completes successfully (Evolution step may fail due to LLM JSON variability)
-
----
-
-## Validated Applications (from Google paper)
-
-1. **Drug Repurposing (AML)** - KIRA6 showing IC50 as low as 13 nM
-2. **Novel Target Discovery (Liver Fibrosis)** - Epigenetic targets validated
-3. **Antimicrobial Resistance (cf-PICIs)** - Recapitulated unpublished findings
