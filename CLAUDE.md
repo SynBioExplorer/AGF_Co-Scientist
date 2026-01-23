@@ -2,17 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 🎯 Project Status: Phase 3 Complete ✅
+## 🎯 Project Status: Phase 4 Complete ✅
 
-**Current State:** Fully functional AI Co-Scientist system with all core features implemented and tested.
+**Current State:** Production-ready AI Co-Scientist system with full storage abstraction, supervisor orchestration, safety mechanisms, and REST API.
 
 **Completed Phases:**
 - ✅ **Phase 1** - Foundation (config, LLM clients, Generation agent)
 - ✅ **Phase 2** - Core Pipeline (Reflection, Ranking, workflow orchestration)
 - ✅ **Phase 3** - Advanced Features (Evolution, Proximity, Meta-review, all bug fixes)
+- ✅ **Phase 4** - Production Infrastructure (Database, Supervisor, Safety, API)
 
 **System Capabilities:**
-- 6 specialized agents working in concert
+- 8 specialized agents working in concert (including Supervisor and Safety)
 - Elo-based tournament ranking (1200 initial rating per Google paper)
 - Multi-turn scientific debates
 - Hypothesis evolution strategies
@@ -22,8 +23,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Robust JSON parsing with error recovery
 - Cost tracking with budget enforcement
 - Provider switching (Google Gemini ⟷ OpenAI)
+- **[Phase 4]** Storage abstraction (Memory, PostgreSQL, Redis caching)
+- **[Phase 4]** Supervisor orchestration with task queue and statistics
+- **[Phase 4]** Safety agent for goal/hypothesis review
+- **[Phase 4]** Checkpoint/resume for workflow persistence
+- **[Phase 4]** FastAPI REST interface with chat endpoint
 
-**Ready for:** Production deployment, Phase 4 enhancements (database, supervisor agent, FastAPI)
+**Ready for:** Production deployment with PostgreSQL and Redis
 
 ---
 
@@ -906,10 +912,15 @@ for hyp in top_hypotheses:
 
 ---
 
-## Phase 4: Supervisor & Task Orchestration ✅ IN PROGRESS (Jan 23, 2026)
+## Phase 4: Production Infrastructure ✅ COMPLETE (Jan 23, 2026)
 
-**Branch:** `phase4/supervisor`
-**Status:** Core supervisor components implemented, ready for integration testing.
+**Status:** All Phase 4 components implemented, merged, and validated.
+
+**Branches Merged:**
+- `phase4/database` - Storage abstraction layer (PostgreSQL, Redis, factory pattern)
+- `phase4/supervisor` - Task orchestration and statistics tracking
+- `phase4/safety` - SafetyAgent and CheckpointManager
+- `phase4/api` - FastAPI web interface with chat endpoint
 
 ### Components Implemented
 
@@ -1117,7 +1128,7 @@ conda activate coscientist
 python test_supervisor.py
 ```
 
-### Current System Capabilities (Phase 4)
+### Current System Capabilities (Phase 4 Complete)
 
 As of Phase 4, the AI Co-Scientist can:
 
@@ -1131,22 +1142,66 @@ As of Phase 4, the AI Co-Scientist can:
 ✅ **Track** system statistics and convergence
 ✅ **Checkpoint** workflow state for resume
 ✅ **Detect** terminal conditions (budget, convergence, quality)
+✅ **Safety review** goals and hypotheses via SafetyAgent
+✅ **Persist** data via PostgreSQL with Redis caching
+✅ **Serve** REST API for web integration
+✅ **Chat** with scientists for feedback
 
-**New Architecture Components:**
-- Supervisor agent with task orchestration
-- Priority-based task queue
-- Agent effectiveness tracking
-- Async storage adapter (BaseStorage compatible)
+**Architecture Components:**
+- 8 specialized agents (Generation, Reflection, Ranking, Evolution, Proximity, Meta-review, Supervisor, Safety)
+- Storage abstraction layer (Memory, PostgreSQL, Redis caching)
+- Priority-based task queue with dynamic weighting
+- Agent effectiveness tracking and statistics
 - Checkpoint/resume functionality
+- FastAPI REST interface
 
 ---
 
-## Next Steps: Remaining Phase 4 Work
+## Phase 4 Components Summary
 
-Remaining Phase 4 features (to be implemented by other agents):
+All Phase 4 features implemented:
 
-1. **Database Integration** - PostgreSQL storage, Redis caching (Database Agent)
-2. **Safety Mechanisms** - Goal/hypothesis safety review (Safety Agent)
-3. **FastAPI Backend** - REST API for web interface (API Agent)
-4. **Scientist-in-the-loop** - Chat interface for human feedback (API Agent)
-5. **Vector Storage** - ChromaDB/pgvector for semantic search (Database Agent)
+1. ✅ **Database Integration** - PostgreSQL storage, Redis caching, factory pattern
+2. ✅ **Supervisor Agent** - Task orchestration, statistics tracking, dynamic weighting
+3. ✅ **Safety Mechanisms** - SafetyAgent for goal/hypothesis safety review
+4. ✅ **Checkpoint/Resume** - CheckpointManager for workflow persistence
+5. ✅ **FastAPI Backend** - REST API for web interface with chat endpoint
+
+### Running the API Server
+
+```bash
+# Activate conda environment
+conda activate coscientist
+
+# Start the API server
+uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+
+# Or use the config settings
+python -c "from src.api import app; import uvicorn; uvicorn.run(app, host='0.0.0.0', port=8000)"
+```
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/goals` | POST | Submit research goal |
+| `/goals/{id}` | GET | Get goal status |
+| `/hypotheses` | GET | List hypotheses |
+| `/hypotheses/{id}` | GET | Get hypothesis details |
+| `/feedback` | POST | Submit scientist feedback |
+| `/statistics/{goal_id}` | GET | Get goal statistics |
+| `/chat` | POST | Chat with system |
+| `/chat/{goal_id}/history` | GET | Get chat history |
+
+---
+
+## Next Steps: Phase 5
+
+Potential future enhancements:
+
+1. **Vector Storage** - ChromaDB/pgvector for semantic search
+2. **Advanced UI** - React/Vue frontend for the API
+3. **Multi-tenancy** - User authentication and workspace isolation
+4. **Observability** - Metrics, tracing, alerting
+5. **Deployment** - Docker, Kubernetes, cloud deployment
