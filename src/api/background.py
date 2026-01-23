@@ -1,6 +1,6 @@
 """Background task management for long-running operations"""
 
-from typing import Dict, Optional, Callable, Any
+from typing import Dict, Optional, Callable, Any, List
 import asyncio
 import uuid
 from datetime import datetime
