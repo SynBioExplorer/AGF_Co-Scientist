@@ -17,6 +17,16 @@ class Settings(BaseSettings):
     # LLM Provider Selection (change this to switch providers globally)
     llm_provider: Literal["google", "openai"] = "google"
 
+    # Storage Configuration
+    # Options: "memory" (development), "postgres" (production), "cached" (production + Redis)
+    storage_backend: Literal["memory", "postgres", "cached"] = "memory"
+
+    # PostgreSQL Configuration
+    database_url: str = "postgresql://localhost:5432/coscientist"
+
+    # Redis Configuration (for caching)
+    redis_url: str = "redis://localhost:6379/0"
+
     # Google Model Configuration
     google_generation_model: str = "gemini-3-pro-preview"
     google_reflection_model: str = "gemini-2.5-flash"
