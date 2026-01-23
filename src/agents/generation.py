@@ -8,7 +8,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent / "03_architecture"))
 from schemas import Hypothesis, ResearchGoal, Citation, ExperimentalProtocol, GenerationMethod
 
 from src.agents.base import BaseAgent
-from src.llm.google import GoogleGeminiClient
+from src.llm.factory import get_llm_client
 from src.prompts.loader import prompt_manager
 from src.utils.ids import generate_hypothesis_id
 from src.utils.errors import CoScientistError
@@ -20,7 +20,7 @@ class GenerationAgent(BaseAgent):
     """Generate hypotheses via literature exploration or simulated debate"""
 
     def __init__(self):
-        llm_client = GoogleGeminiClient(
+        llm_client = get_llm_client(
             model=settings.generation_model,
             agent_name="generation"
         )

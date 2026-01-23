@@ -72,6 +72,12 @@ class PromptManager:
         hypothesis_a: str,
         hypothesis_b: str,
         method: str = "tournament",  # "tournament" or "debate"
+        goal: str = "",
+        idea_attributes: str = "novelty, correctness, testability, feasibility",
+        preferences: str = "",
+        notes: str = "",
+        review_a: str = "",
+        review_b: str = "",
         **kwargs
     ) -> str:
         """Format ranking agent prompt"""
@@ -80,9 +86,14 @@ class PromptManager:
         else:
             template = self.load_prompt("05_Ranking_Agent_Hypothesis_Comparison_Scientific_Debate.txt")
 
+        # Use correct template variable names
         return template.format(
-            hypothesis_a=hypothesis_a,
-            hypothesis_b=hypothesis_b,
+            goal=goal or "Compare hypotheses",
+            idea_attributes=idea_attributes,
+            preferences=preferences or "Standard scientific rigor",
+            notes=notes or "Focus on scientific merit",
+            **{"hypothesis 1": hypothesis_a, "hypothesis 2": hypothesis_b},
+            **{"review 1": review_a or "No review available", "review 2": review_b or "No review available"},
             **kwargs
         )
 
