@@ -16,6 +16,7 @@ from src.agents.proximity import ProximityAgent
 from src.agents.meta_review import MetaReviewAgent
 from src.tournament.elo import TournamentRanker
 from src.storage.memory import storage
+from src.utils.strategy_selector import select_evolution_strategy
 import structlog
 
 logger = structlog.get_logger()
@@ -192,10 +193,16 @@ class CoScientistWorkflow:
             # Get reviews for context
             reviews = storage.get_reviews_for_hypothesis(hypothesis.id)
 
-            # Evolve with feasibility improvement strategy
+            # Dynamic strategy selection based on reviews and hypothesis count
+            strategy = select_evolution_strategy(
+                reviews=reviews,
+                hypothesis_count=len(state.get("hypotheses", []))
+            )
+
+            # Evolve with selected strategy
             evolved = self.evolution_agent.execute(
                 hypothesis=hypothesis,
-                strategy=EvolutionStrategy.FEASIBILITY,
+                strategy=strategy,
                 reviews=reviews
             )
 
@@ -206,7 +213,7 @@ class CoScientistWorkflow:
                 "Hypothesis evolved",
                 original_id=hypothesis.id,
                 evolved_id=evolved.id,
-                strategy="FEASIBILITY"
+                strategy=strategy.value
             )
 
         return {"hypotheses": evolved_hypotheses}
