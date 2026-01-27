@@ -3,6 +3,8 @@
 from typing import Dict, Any
 from pydantic import ValidationError as PydanticValidationError
 import sys
+import json
+import re
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent / "03_architecture"))
 from schemas import Hypothesis, ResearchGoal, Citation, ExperimentalProtocol, GenerationMethod
@@ -13,6 +15,7 @@ from src.prompts.loader import prompt_manager
 from src.utils.ids import generate_hypothesis_id
 from src.utils.errors import CoScientistError
 from src.utils.web_search import get_search_client
+from src.utils.json_parser import parse_llm_json
 from src.config import settings
 import json
 
@@ -116,15 +119,7 @@ Respond with ONLY the JSON object, no additional text."""
 
         # Parse response
         try:
-            # Extract JSON from response (might have markdown code blocks)
-            if "```json" in response:
-                json_str = response.split("```json")[1].split("```")[0].strip()
-            elif "```" in response:
-                json_str = response.split("```")[1].split("```")[0].strip()
-            else:
-                json_str = response.strip()
-
-            data = json.loads(json_str)
+            data = parse_llm_json(response, agent_name="GenerationAgent")
 
             # Build Hypothesis object
             hypothesis = Hypothesis(
@@ -138,7 +133,7 @@ Respond with ONLY the JSON object, no additional text."""
                 experimental_protocol=ExperimentalProtocol(**data["experimental_protocol"]),
                 literature_citations=[Citation(**c) for c in data.get("citations", [])],
                 generation_method=method,
-                elo_rating=1500.0  # Initial Elo
+                elo_rating=1200.0  # Initial Elo per Google paper (page 11)
             )
 
             self.logger.info(

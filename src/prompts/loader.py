@@ -35,7 +35,8 @@ class PromptManager:
         method: str = "literature",  # "literature" or "debate"
         source_hypothesis: str = "",
         instructions: str = "",
-        articles_with_reasoning: str = ""
+        articles_with_reasoning: str = "",
+        transcript: str = ""
     ) -> str:
         """Format generation agent prompt"""
         if method == "literature":
@@ -49,7 +50,8 @@ class PromptManager:
             preferences="\n".join(f"- {p}" for p in preferences) if preferences else "Standard scientific rigor",
             source_hypothesis=source_hypothesis or "None",
             instructions=instructions or "",
-            articles_with_reasoning=articles_with_reasoning or "Initial hypothesis generation - no prior literature review."
+            articles_with_reasoning=articles_with_reasoning or "Initial hypothesis generation - no prior literature review.",
+            transcript=transcript or "No prior debate transcript available."
         )
         return formatted
 
@@ -101,6 +103,8 @@ class PromptManager:
         self,
         hypothesis: str,
         strategy: str = "feasibility",  # "feasibility" or "out_of_box"
+        goal: str = "",
+        preferences: str = "",
         **kwargs
     ) -> str:
         """Format evolution agent prompt"""
@@ -111,6 +115,8 @@ class PromptManager:
 
         return template.format(
             hypothesis=hypothesis,
+            goal=goal or "Improve the hypothesis",
+            preferences=preferences or "Novelty, correctness, testability, and feasibility",
             **kwargs
         )
 

@@ -113,7 +113,7 @@ class CoScientistWorkflow:
                 hypothesis_a=hyp_a,
                 hypothesis_b=hyp_b,
                 method="tournament",
-                multi_turn=False,
+                multi_turn=True,
                 goal=state["research_goal"].description
             )
             storage.add_match(match)
@@ -231,7 +231,7 @@ class CoScientistWorkflow:
             )
 
         # Generate meta-review
-        all_reviews = list(storage.reviews.values())
+        all_reviews = storage.get_all_reviews()
         all_matches = storage.get_all_matches()
 
         if all_reviews and all_matches:
@@ -254,7 +254,8 @@ class CoScientistWorkflow:
                 goal=state["research_goal"].description,
                 top_hypotheses=top_hypotheses,
                 meta_review=meta_review,
-                preferences=state["research_goal"].preferences
+                preferences=state["research_goal"].preferences,
+                research_goal_id=state["research_goal"].id
             )
 
             logger.info(

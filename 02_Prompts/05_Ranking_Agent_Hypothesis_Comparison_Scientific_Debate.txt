@@ -19,7 +19,7 @@ Hypothesis 2:
 {hypothesis 2}
 
 Initial review of hypothesis 1:
-{review1}
+{review 1}
 
 Initial review of hypothesis 2:
 {review 2}
