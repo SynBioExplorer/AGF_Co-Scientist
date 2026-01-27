@@ -58,6 +58,7 @@ class TestGoalEndpoints:
 
     def test_submit_goal_creates_goal(self):
         """Submitting a goal should create it and return processing status"""
+        import asyncio
         payload = {
             "description": "Identify novel drug targets for acute myeloid leukemia treatment",
             "constraints": ["FDA-approved compounds only", "in vitro validation required"],
@@ -65,7 +66,10 @@ class TestGoalEndpoints:
         }
 
         with patch('src.api.main.task_manager') as mock_task_manager:
-            mock_task_manager.start_sync_task.return_value = "mock-task-id"
+            # Mock the async start_async_task method
+            async def mock_start_async_task(*args, **kwargs):
+                return "mock-task-id"
+            mock_task_manager.start_async_task = MagicMock(side_effect=mock_start_async_task)
 
             response = client.post("/goals", json=payload)
 
