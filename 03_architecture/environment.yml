@@ -33,6 +33,9 @@ dependencies:
   # PDF Processing
   - pypdf
 
+  # HTTP Client
+  - requests            # Tavily web search API
+
   # Async
   - aiohttp
   - httpx
@@ -50,6 +53,7 @@ dependencies:
     - langchain>=0.3
     - langchain-anthropic      # Claude integration
     - langchain-google-genai   # Gemini integration
+    - langchain-openai         # OpenAI integration
     - litellm                  # Unified LLM interface (optional)
 
     # Search & RAG
