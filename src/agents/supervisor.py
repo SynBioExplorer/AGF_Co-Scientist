@@ -58,6 +58,7 @@ from src.storage.async_adapter import AsyncStorageAdapter
 from src.config import settings
 from src.utils.ids import generate_id, generate_task_id
 from src.utils.json_parser import parse_llm_json
+from src.utils.strategy_selector import select_evolution_strategy
 
 import structlog
 
@@ -498,6 +499,16 @@ Respond with ONLY the JSON object."""
             # Find top hypothesis for evolution
             top = await self.storage.get_top_hypotheses(n=1, goal_id=goal_id)
             if top:
+                # Get reviews for this hypothesis to inform strategy selection
+                reviews = await self.storage.get_reviews_for_hypothesis(top[0].id)
+                all_hypotheses = await self.storage.get_hypotheses_by_goal(goal_id)
+
+                # Dynamic strategy selection based on context
+                strategy = select_evolution_strategy(
+                    reviews=reviews,
+                    hypothesis_count=len(all_hypotheses)
+                )
+
                 return AgentTask(
                     id=generate_task_id(),
                     agent_type=AgentType.EVOLUTION,
@@ -505,7 +516,7 @@ Respond with ONLY the JSON object."""
                     priority=6,
                     parameters={
                         "hypothesis_id": top[0].id,
-                        "strategy": EvolutionStrategy.FEASIBILITY.value,
+                        "strategy": strategy.value,
                     },
                     status="pending"
                 )
