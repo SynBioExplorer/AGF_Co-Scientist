@@ -629,10 +629,8 @@ Respond with ONLY the JSON object."""
                     agent.execute,
                     hypothesis_a=h_a,
                     hypothesis_b=h_b,
-                    review_a=reviews_a[0] if reviews_a else None,
-                    review_b=reviews_b[0] if reviews_b else None,
+                    multi_turn=True,
                     goal=research_goal.description,
-                    preferences=research_goal.preferences
                 )
                 await self.storage.add_match(match)
 
