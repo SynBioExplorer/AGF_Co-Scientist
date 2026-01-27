@@ -113,7 +113,7 @@ uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 | **Phase 1** | Config, LLM clients, Generation agent | [03_architecture/Phase1/](03_architecture/Phase1/) |
 | **Phase 2** | Reflection, Ranking, Elo, LangGraph workflow | [03_architecture/Phase2/](03_architecture/Phase2/) |
 | **Phase 3** | Evolution, Proximity, Meta-review, Tavily search | [03_architecture/Phase3/](03_architecture/Phase3/) |
-| **Phase 4** | PostgreSQL, Redis, Supervisor, Safety, FastAPI | [03_architecture/Phase4/](03_architecture/Phase4/) |
+| **Phase 4** | PostgreSQL, Redis, Supervisor, Safety, FastAPI + Fixes | [03_architecture/Phase4/](03_architecture/Phase4/) |
 | **Phase 5** | Vector storage, tools, frontend, auth, deployment | [03_architecture/Phase5/](03_architecture/Phase5/) |
 
 ---
@@ -172,6 +172,18 @@ All 27 Pydantic models defined in [03_architecture/schemas.py](03_architecture/s
 - **Meta-review:** MetaReviewCritique, ResearchDirection, ResearchOverview
 - **System:** AgentTask, SystemStatistics, ContextMemory
 - **Interaction:** ScientistFeedback, ChatMessage
+
+---
+
+## Phase 4 Fixes (Post-Implementation)
+
+Three critical issues were identified and fixed to align the implementation with the Google paper:
+
+| Fix | Issue | Solution | Docs |
+|-----|-------|----------|------|
+| Supervisor Integration | API bypassed SupervisorAgent, using simplified workflow | API now uses SupervisorAgent for dynamic orchestration | [PHASE4_FIX_SUPERVISOR_INTEGRATION.md](03_architecture/Phase4/PHASE4_FIX_SUPERVISOR_INTEGRATION.md) |
+| Multi-Turn Debate | Debate was implemented but hardcoded to disabled | Enabled `multi_turn=True` in workflow and supervisor | [PHASE4_FIX_MULTI_TURN_DEBATE.md](03_architecture/Phase4/PHASE4_FIX_MULTI_TURN_DEBATE.md) |
+| Evolution Strategies | Only FEASIBILITY strategy was used (hardcoded) | Dynamic selection from all 7 strategies based on context | [PHASE4_FIX_EVOLUTION_STRATEGIES.md](03_architecture/Phase4/PHASE4_FIX_EVOLUTION_STRATEGIES.md) |
 
 ---
 
