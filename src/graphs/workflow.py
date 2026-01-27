@@ -113,7 +113,7 @@ class CoScientistWorkflow:
                 hypothesis_a=hyp_a,
                 hypothesis_b=hyp_b,
                 method="tournament",
-                multi_turn=False,
+                multi_turn=True,
                 goal=state["research_goal"].description
             )
             storage.add_match(match)
