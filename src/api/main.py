@@ -26,7 +26,7 @@ from src.api.models import (
 )
 from src.api.background import task_manager
 from src.storage.async_adapter import async_storage as storage
-from src.graphs.workflow import CoScientistWorkflow
+from src.agents.supervisor import SupervisorAgent
 from src.utils.ids import generate_id
 from src.utils.logging_config import setup_logging
 from schemas import ResearchGoal, HypothesisStatus, ScientistFeedback
@@ -73,10 +73,52 @@ app.add_middleware(
 # ==============================================================================
 
 
-def run_workflow(goal: ResearchGoal, max_iterations: int, enable_evolution: bool):
-    """Run the workflow synchronously (for background execution)"""
-    workflow = CoScientistWorkflow(enable_evolution=enable_evolution)
-    return workflow.run(research_goal=goal, max_iterations=max_iterations)
+async def run_supervisor_workflow(
+    goal: ResearchGoal,
+    max_iterations: int,
+    enable_evolution: bool
+) -> str:
+    """Run supervisor-orchestrated workflow asynchronously.
+
+    This replaces the simplified CoScientistWorkflow with the full
+    SupervisorAgent which provides:
+    - Dynamic task queue with weighted agent selection
+    - Terminal condition detection (budget, convergence, quality)
+    - Checkpoint/resume capability
+    - Statistics tracking for weight adaptation
+
+    Args:
+        goal: Research goal to work on.
+        max_iterations: Maximum iterations before stopping.
+        enable_evolution: Whether to enable hypothesis evolution.
+
+    Returns:
+        Status message with summary of execution.
+    """
+    logger.info(
+        "Starting SupervisorAgent execution",
+        goal_id=goal.id,
+        max_iterations=max_iterations,
+        enable_evolution=enable_evolution
+    )
+
+    supervisor = SupervisorAgent(storage)
+
+    # Execute supervisor orchestration
+    # Note: enable_evolution is handled by the supervisor's dynamic weighting
+    # The Evolution agent weight is adjusted based on effectiveness
+    result = await supervisor.execute(
+        research_goal=goal,
+        max_iterations=max_iterations
+    )
+
+    logger.info(
+        "SupervisorAgent execution completed",
+        goal_id=goal.id,
+        result=result
+    )
+
+    return result
 
 
 async def compute_statistics(goal_id: str) -> dict:
@@ -174,13 +216,14 @@ async def submit_goal(
     # Save to storage
     await storage.add_research_goal(goal)
 
-    # Start workflow in background
-    task_id = task_manager.start_sync_task(
+    # Start supervisor workflow in background (async)
+    task_id = await task_manager.start_async_task(
         goal_id=goal.id,
-        func=run_workflow,
-        goal=goal,
-        max_iterations=config.max_iterations,
-        enable_evolution=config.enable_evolution,
+        coroutine=run_supervisor_workflow(
+            goal=goal,
+            max_iterations=config.max_iterations,
+            enable_evolution=config.enable_evolution
+        )
     )
 
     logger.info(
