@@ -74,8 +74,12 @@ dependencies:
     - fastapi
     - uvicorn[standard]
 
+    # Observability
+    - langsmith>=0.1.0         # LLM tracing and debugging
+
     # Utilities
     - python-dotenv
     - pydantic-settings        # Configuration management
     - tenacity                 # Retry logic
     - structlog                # Structured logging
+    - aiofiles>=23.0.0         # Async file operations

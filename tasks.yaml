@@ -1,0 +1,436 @@
+request: "Build Phase 5 features for the AI Co-Scientist project as a local deployment (no AWS). Phase 5 includes: Vector Storage (ChromaDB), Tool Integration (PubMed), Literature Processing (PDF parsing, chunking), Frontend Dashboard (React), and Observability (LangSmith)."
+created_at: "2025-01-29T10:15:00+11:00"
+
+# =============================================================================
+# TASK DEFINITIONS
+# =============================================================================
+
+tasks:
+  # ---------------------------------------------------------------------------
+  # TASK 1: Vector Storage & Embeddings (Phase 5A)
+  # ---------------------------------------------------------------------------
+  - id: task-vector-storage
+    description: |
+      Implement vector embeddings and ChromaDB storage for hypothesis similarity.
+      This replaces/augments the LLM-based Proximity agent with fast vector similarity.
+
+      Components:
+      - Embedding client abstraction (BaseEmbeddingClient)
+      - Google embedding client (text-embedding-004)
+      - OpenAI embedding client (text-embedding-3-small)
+      - ChromaDB vector store implementation
+      - Vector store factory
+      - Update ProximityAgent to use vector similarity
+      - Config updates for embedding settings
+    files_write:
+      - "src/embeddings/__init__.py"
+      - "src/embeddings/base.py"
+      - "src/embeddings/google.py"
+      - "src/embeddings/openai.py"
+      - "src/embeddings/factory.py"
+      - "src/storage/vector.py"
+      - "src/storage/vector_factory.py"
+      - "05_tests/phase5_vector_test.py"
+    files_read:
+      - "src/storage/base.py"
+      - "src/agents/proximity.py"
+      - "src/config.py"
+      - "src/llm/base.py"
+      - "src/llm/factory.py"
+      - "contracts/embedding_interface.py"
+      - "contracts/vector_store_interface.py"
+      - "03_architecture/Phase5/PHASE5A_VECTOR_STORAGE.md"
+    resources_write:
+      - "module:src/embeddings"
+      - "config:embedding_provider"
+      - "config:vector_store_type"
+    depends_on: []
+    verification:
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -c 'from src.embeddings.base import BaseEmbeddingClient; print(\"OK\")'"
+        type: import
+        required: true
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -c 'from src.storage.vector import ChromaVectorStore; print(\"OK\")'"
+        type: import
+        required: true
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python 05_tests/phase5_vector_test.py"
+        type: test
+        required: true
+    patch_intents:
+      - file: "src/config.py"
+        action: "add_settings"
+        intent:
+          settings:
+            - "vector_store_type: Literal['chroma', 'memory'] = 'chroma'"
+            - "chroma_persist_directory: str = './chroma_data'"
+            - "embedding_provider: Literal['google', 'openai'] = 'google'"
+            - "google_embedding_model: str = 'text-embedding-004'"
+            - "openai_embedding_model: str = 'text-embedding-3-small'"
+      - file: "src/agents/proximity.py"
+        action: "add_vector_support"
+        intent:
+          description: "Add optional vector_store and embedding_client parameters to constructor, add use_vectors flag, implement _vector_similarity and _get_embedding methods"
+
+  # ---------------------------------------------------------------------------
+  # TASK 2: Observability with LangSmith (Phase 5F)
+  # ---------------------------------------------------------------------------
+  - id: task-observability
+    description: |
+      Integrate LangSmith for LLM tracing, debugging, and cost monitoring.
+
+      Components:
+      - Tracing module with context managers and decorators
+      - LLM client integration (callbacks for tracing)
+      - Agent tracing decorators
+      - Environment variable configuration
+    files_write:
+      - "src/observability/__init__.py"
+      - "src/observability/tracing.py"
+      - "05_tests/phase5_tracing_test.py"
+    files_read:
+      - "src/llm/base.py"
+      - "src/llm/google.py"
+      - "src/llm/openai.py"
+      - "src/agents/base.py"
+      - "contracts/tracing_interface.py"
+      - "03_architecture/Phase5/PHASE5F_OBSERVABILITY.md"
+    resources_write:
+      - "module:src/observability"
+      - "config:langsmith"
+    depends_on: []
+    verification:
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -c 'from src.observability.tracing import get_tracer, trace_agent, LANGSMITH_ENABLED; print(f\"LangSmith enabled: {LANGSMITH_ENABLED}\")'"
+        type: import
+        required: true
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python 05_tests/phase5_tracing_test.py"
+        type: test
+        required: true
+    patch_intents:
+      - file: "src/llm/base.py"
+        action: "add_tracing"
+        intent:
+          description: "Import tracing utilities, add callbacks property that includes LangSmith tracer if enabled"
+      - file: "src/llm/google.py"
+        action: "add_tracing"
+        intent:
+          description: "Pass self.callbacks to ChatGoogleGenerativeAI, add @trace_llm_call decorator to ainvoke"
+      - file: "src/llm/openai.py"
+        action: "add_tracing"
+        intent:
+          description: "Pass self.callbacks to ChatOpenAI, add @trace_llm_call decorator to ainvoke"
+
+  # ---------------------------------------------------------------------------
+  # TASK 3: Tool Integration - PubMed (Phase 5B)
+  # ---------------------------------------------------------------------------
+  - id: task-tool-integration
+    description: |
+      Implement tool framework and PubMed integration for literature research.
+
+      Components:
+      - Tool base interface (BaseTool)
+      - Tool registry for domain-based selection
+      - PubMed tool implementation (NCBI E-utilities)
+      - API endpoint for PubMed search (router file only, integration task adds to main.py)
+      - Integration with Generation agent (optional context)
+    files_write:
+      - "src/tools/__init__.py"
+      - "src/tools/base.py"
+      - "src/tools/registry.py"
+      - "src/tools/pubmed.py"
+      - "src/api/tools.py"
+      - "05_tests/phase5_tools_test.py"
+    files_read:
+      - "src/agents/generation.py"
+      - "src/api/main.py"
+      - "src/utils/web_search.py"
+      - "contracts/tool_interface.py"
+      - "contracts/api_interface.py"
+      - "03_architecture/Phase5/PHASE5B_TOOL_INTEGRATION.md"
+    resources_write:
+      - "module:src/tools"
+      - "file:src/api/tools.py"
+      - "config:pubmed_api_key"
+    depends_on: []
+    verification:
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -c 'from src.tools.pubmed import PubMedTool; from src.tools.registry import ToolRegistry; print(\"OK\")'"
+        type: import
+        required: true
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python 05_tests/phase5_tools_test.py"
+        type: test
+        required: true
+    patch_intents:
+      - file: "src/config.py"
+        action: "add_settings"
+        intent:
+          settings:
+            - "pubmed_api_key: str | None = None"
+            - "tool_timeout_seconds: int = 30"
+            - "tool_max_results: int = 10"
+
+  # ---------------------------------------------------------------------------
+  # TASK 4: Literature Processing (Phase 5C)
+  # ---------------------------------------------------------------------------
+  - id: task-literature-processing
+    description: |
+      Implement PDF parsing, text chunking, citation extraction, and private
+      document repository with semantic search.
+
+      Components:
+      - PDF parser using PyMuPDF
+      - Text chunker (sentence-aware)
+      - Citation extractor
+      - Citation graph builder
+      - Private repository with vector search
+      - API endpoints for upload/search (router file only, integration task adds to main.py)
+    files_write:
+      - "src/literature/__init__.py"
+      - "src/literature/pdf_parser.py"
+      - "src/literature/chunker.py"
+      - "src/literature/citation_extractor.py"
+      - "src/literature/citation_graph.py"
+      - "src/literature/repository.py"
+      - "src/api/documents.py"
+      - "05_tests/phase5_literature_test.py"
+    files_read:
+      - "src/storage/vector.py"
+      - "src/embeddings/base.py"
+      - "src/api/main.py"
+      - "contracts/literature_interface.py"
+      - "contracts/vector_store_interface.py"
+      - "contracts/api_interface.py"
+      - "03_architecture/Phase5/PHASE5C_LITERATURE_PROCESSING.md"
+    resources_write:
+      - "module:src/literature"
+      - "file:src/api/documents.py"
+    depends_on:
+      - "task-vector-storage"
+    verification:
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -c 'from src.literature.pdf_parser import PDFParser; from src.literature.repository import PrivateRepository; print(\"OK\")'"
+        type: import
+        required: true
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python 05_tests/phase5_literature_test.py"
+        type: test
+        required: true
+
+  # ---------------------------------------------------------------------------
+  # TASK 5: Backend Settings API
+  # ---------------------------------------------------------------------------
+  - id: task-settings-api
+    description: |
+      Add backend API endpoints for runtime settings configuration.
+      This enables the frontend to read/update settings without restart.
+
+      Components:
+      - Settings GET endpoint (current configuration)
+      - Settings PUT endpoint (update configuration)
+      - Settings validation and persistence
+      - Router file only, integration task adds to main.py
+    files_write:
+      - "src/api/settings.py"
+      - "05_tests/phase5_settings_test.py"
+    files_read:
+      - "src/config.py"
+      - "src/api/main.py"
+      - "src/api/models.py"
+      - "contracts/api_interface.py"
+    resources_write:
+      - "file:src/api/settings.py"
+    depends_on: []
+    verification:
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -c 'from src.api.settings import router; print(\"OK\")'"
+        type: import
+        required: true
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python 05_tests/phase5_settings_test.py"
+        type: test
+        required: true
+
+  # ---------------------------------------------------------------------------
+  # TASK 6: Frontend Dashboard (Phase 5D)
+  # ---------------------------------------------------------------------------
+  - id: task-frontend
+    description: |
+      Build React frontend with TypeScript, Vite, and Tailwind CSS.
+
+      Components:
+      - Project setup (Vite + React + TypeScript + Tailwind)
+      - Layout components (Header, Sidebar, Layout)
+      - Settings panel (model selector, API keys, parameters)
+      - Chat interface (message list, input, context display)
+      - Hypothesis browser (list, detail, reviews, evolution history)
+      - Visualizations (Elo chart, quality distribution)
+      - Literature page (PDF upload, search)
+      - Dashboard with statistics
+      - Zustand store for settings
+      - React Query for data fetching
+      - Polling hook for status updates
+    files_write:
+      - "frontend/package.json"
+      - "frontend/vite.config.ts"
+      - "frontend/tailwind.config.js"
+      - "frontend/postcss.config.js"
+      - "frontend/tsconfig.json"
+      - "frontend/index.html"
+      - "frontend/.env"
+      - "frontend/src/main.tsx"
+      - "frontend/src/App.tsx"
+      - "frontend/src/index.css"
+      - "frontend/src/types/index.ts"
+      - "frontend/src/services/api.ts"
+      - "frontend/src/store/settingsStore.ts"
+      - "frontend/src/hooks/useApi.ts"
+      - "frontend/src/hooks/usePolling.ts"
+      - "frontend/src/hooks/useSettings.ts"
+      - "frontend/src/components/common/Button.tsx"
+      - "frontend/src/components/common/Card.tsx"
+      - "frontend/src/components/common/Loading.tsx"
+      - "frontend/src/components/common/Slider.tsx"
+      - "frontend/src/components/common/Select.tsx"
+      - "frontend/src/components/layout/Header.tsx"
+      - "frontend/src/components/layout/Sidebar.tsx"
+      - "frontend/src/components/layout/Layout.tsx"
+      - "frontend/src/components/settings/SettingsPanel.tsx"
+      - "frontend/src/components/settings/ModelSelector.tsx"
+      - "frontend/src/components/settings/ApiKeyInput.tsx"
+      - "frontend/src/components/settings/ParameterSliders.tsx"
+      - "frontend/src/components/chat/ChatWindow.tsx"
+      - "frontend/src/components/chat/MessageList.tsx"
+      - "frontend/src/components/chat/MessageInput.tsx"
+      - "frontend/src/components/hypotheses/HypothesisList.tsx"
+      - "frontend/src/components/hypotheses/HypothesisCard.tsx"
+      - "frontend/src/components/hypotheses/HypothesisDetail.tsx"
+      - "frontend/src/components/literature/PdfUpload.tsx"
+      - "frontend/src/components/literature/DocumentList.tsx"
+      - "frontend/src/components/literature/SearchResults.tsx"
+      - "frontend/src/components/visualizations/EloChart.tsx"
+      - "frontend/src/components/visualizations/QualityDistribution.tsx"
+      - "frontend/src/components/visualizations/AgentActivity.tsx"
+      - "frontend/src/pages/Dashboard.tsx"
+      - "frontend/src/pages/ChatPage.tsx"
+      - "frontend/src/pages/HypothesesPage.tsx"
+      - "frontend/src/pages/LiteraturePage.tsx"
+      - "frontend/src/pages/SettingsPage.tsx"
+    files_read:
+      - "src/api/main.py"
+      - "src/api/models.py"
+      - "contracts/api_interface.py"
+      - "03_architecture/Phase5/PHASE5D_FRONTEND_DASHBOARD.md"
+    resources_write:
+      - "module:frontend"
+    depends_on:
+      - "task-settings-api"
+      - "task-tool-integration"
+      - "task-literature-processing"
+    verification:
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist/frontend' && npm install"
+        type: setup
+        required: true
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist/frontend' && npm run build"
+        type: build
+        required: true
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist/frontend' && npm run lint || true"
+        type: lint
+        required: false
+
+  # ---------------------------------------------------------------------------
+  # TASK 7: Integration & Final Testing
+  # ---------------------------------------------------------------------------
+  - id: task-integration
+    description: |
+      Final integration testing, router registration, and environment updates.
+      This task is responsible for modifying src/api/main.py to include all new routers.
+
+      Components:
+      - Register all new API routers in main.py
+      - Update environment.yml with new dependencies
+      - Integration test that verifies all endpoints
+      - Update Phase 5 status documentation
+    files_write:
+      - "05_tests/phase5_integration_test.py"
+    files_read:
+      - "src/api/main.py"
+      - "src/api/tools.py"
+      - "src/api/documents.py"
+      - "src/api/settings.py"
+      - "03_architecture/environment.yml"
+      - "03_architecture/Phase5/README_PHASE5.md"
+      - "03_architecture/Phase5/PHASE5_IMPLEMENTATION_STATUS.md"
+    resources_write:
+      - "file:src/api/main.py"
+      - "config:environment"
+    depends_on:
+      - "task-vector-storage"
+      - "task-observability"
+      - "task-tool-integration"
+      - "task-literature-processing"
+      - "task-settings-api"
+      - "task-frontend"
+    verification:
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python 05_tests/phase5_integration_test.py"
+        type: test
+        required: true
+    patch_intents:
+      - file: "src/api/main.py"
+        action: "add_routers"
+        intent:
+          routers:
+            - module: "src.api.tools"
+              prefix: "/api/v1"
+              tags: ["Tools"]
+            - module: "src.api.documents"
+              prefix: "/api/v1"
+              tags: ["Documents"]
+            - module: "src.api.settings"
+              prefix: "/api/v1"
+              tags: ["Settings"]
+      - file: "03_architecture/environment.yml"
+        action: "add_dependencies"
+        intent:
+          dependencies:
+            - "chromadb>=0.4.0"
+            - "pymupdf>=1.23.0"
+            - "langsmith>=0.1.0"
+            - "aiofiles>=23.0.0"
+      - file: "03_architecture/Phase5/PHASE5_IMPLEMENTATION_STATUS.md"
+        action: "update_status"
+        intent:
+          description: "Update all Phase 5 features from :hourglass: to :white_check_mark:"
+
+# =============================================================================
+# CONTRACT DEFINITIONS
+# =============================================================================
+
+contracts:
+  - name: "EmbeddingClientProtocol"
+    version: "3f65fb4"
+    file_path: "contracts/embedding_interface.py"
+    methods: ["embed", "embed_batch", "dimension"]
+    consumers: ["task-vector-storage", "task-literature-processing"]
+
+  - name: "VectorStoreProtocol"
+    version: "3f65fb4"
+    file_path: "contracts/vector_store_interface.py"
+    methods: ["add_documents", "search", "delete", "get"]
+    consumers: ["task-vector-storage", "task-literature-processing"]
+
+  - name: "ToolProtocol"
+    version: "3f65fb4"
+    file_path: "contracts/tool_interface.py"
+    methods: ["name", "description", "domains", "execute"]
+    consumers: ["task-tool-integration"]
+
+  - name: "TracingProtocol"
+    version: "3f65fb4"
+    file_path: "contracts/tracing_interface.py"
+    methods: ["get_tracer", "trace_run", "log_feedback"]
+    consumers: ["task-observability"]
+
+  - name: "LiteratureProtocols"
+    version: "3f65fb4"
+    file_path: "contracts/literature_interface.py"
+    methods: ["PDFParserProtocol", "LiteratureRepositoryProtocol"]
+    consumers: ["task-literature-processing"]
+
+  - name: "APIContracts"
+    version: "3f65fb4"
+    file_path: "contracts/api_interface.py"
+    methods: ["DocumentUploadResponse", "PubMedSearchResponse", "SettingsResponse"]
+    consumers: ["task-tool-integration", "task-literature-processing", "task-settings-api", "task-frontend"]

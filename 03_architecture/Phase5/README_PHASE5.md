@@ -1,122 +1,122 @@
-# Phase 5: Production Deployment & Advanced Features
+# Phase 5: Frontend UI & Advanced Features
+
+> **Deployment Target: LOCAL ONLY**
+>
+> This phase is designed for local development and single-user operation.
+> No cloud deployment, authentication, or multi-user features are included.
+> Run everything on `localhost` - no external hosting required.
 
 ## Overview
 
-Phase 5 extends the production-ready AI Co-Scientist system with advanced capabilities for semantic search, specialized tool integration, literature processing, frontend visualization, multi-user support, observability, and cloud deployment.
+Phase 5 extends the AI Co-Scientist system with a React frontend, vector storage, literature tools, and LangSmith observability.
 
 **Prerequisites:** Phase 4 complete (Storage, Supervisor, Safety, API)
+**Target Environment:** Local development (localhost)
 
 ## Phase 5 Components
 
-| Phase | Component | Description | Effort | Impact |
-|-------|-----------|-------------|--------|--------|
-| **5A** | Vector Storage & Semantic Search | ChromaDB/pgvector for hypothesis embeddings | Medium | High |
-| **5B** | Specialized Tool Integration | AlphaFold, PubMed, DrugBank, ChEMBL APIs | High | High |
-| **5C** | Advanced Literature Processing | PDF parsing, citation graphs, private repos | Medium | Medium |
-| **5D** | Frontend Dashboard | React/Vue UI for scientist interaction | High | High |
-| **5E** | Multi-User & Authentication | OAuth2/JWT, workspaces, RBAC | Medium | Medium |
-| **5F** | Observability & Monitoring | Prometheus, Grafana, alerting | Low | Medium |
-| **5G** | Containerization & Deployment | Docker, Kubernetes, CI/CD | Low | Low |
+| Phase | Component | Description | Status |
+|-------|-----------|-------------|--------|
+| **5A** | Vector Storage | ChromaDB for hypothesis embeddings | Planned |
+| **5B** | Literature Tools | PubMed integration for research | Planned |
+| **5C** | Literature Processing | PDF parsing, chunking, semantic search | Planned |
+| **5D** | Frontend Dashboard | React UI with settings, chat, visualizations | Planned |
+| **5F** | Observability | LangSmith tracing integration | Planned |
+
+## Deferred Components
+
+| Phase | Component | Reason |
+|-------|-----------|--------|
+| **5E** | Authentication | Not needed for MVP |
+| **5G** | Deployment | Defer until production needed |
 
 ## Recommended Execution Order
 
 ```
-5A (Vector) → 5B (Tools) → 5D (Frontend) → 5C (Literature) → 5E (Auth) → 5F (Observability) → 5G (Deployment)
+5A (Vector) → 5F (LangSmith) → 5B (Tools) → 5C (Literature) → 5D (Frontend)
 ```
 
 **Rationale:**
-- 5A enables fast semantic search, replacing expensive LLM-based Proximity agent clustering
-- 5B adds scientific tools mentioned in Google paper (Section 3.5)
-- 5D provides scientist-facing interface (high user impact)
-- 5C enhances literature grounding quality
-- 5E required for production multi-user deployment
-- 5F/5G are operational concerns for production
+- 5A enables semantic search for literature and hypotheses
+- 5F provides debugging visibility during development
+- 5B/5C add literature research capabilities
+- 5D ties everything together with the UI
 
-## Parallel Development Strategy
-
-Like Phase 4, use git worktrees + tmux for parallel development:
+## Architecture Overview
 
 ```
-main-repo/
-├── worktree-5a-vector/       (Phase 5A: Vector Storage)
-├── worktree-5b-tools/        (Phase 5B: Tool Integration)
-├── worktree-5c-literature/   (Phase 5C: Literature Processing)
-├── worktree-5d-frontend/     (Phase 5D: Frontend Dashboard)
-├── worktree-5e-auth/         (Phase 5E: Authentication)
-├── worktree-5f-observability/(Phase 5F: Monitoring)
-└── worktree-5g-deployment/   (Phase 5G: Containerization)
+┌─────────────────────────────────────────────────────────────┐
+│                     React Frontend                          │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐          │
+│  │  Chat   │ │Hypotheses│ │ Settings│ │Literature│          │
+│  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘          │
+│       └───────────┴───────────┴───────────┘                │
+│                         │                                   │
+└─────────────────────────┼───────────────────────────────────┘
+                          │ REST API
+┌─────────────────────────┼───────────────────────────────────┐
+│                    FastAPI Backend                          │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐          │
+│  │ Agents  │ │ Storage │ │  Tools  │ │Literature│          │
+│  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘          │
+│       │           │           │           │                 │
+│       └───────────┴─────┬─────┴───────────┘                │
+│                         │                                   │
+│              ┌──────────┴──────────┐                       │
+│              │     LangSmith       │                       │
+│              │   (Tracing/Debug)   │                       │
+│              └─────────────────────┘                       │
+└─────────────────────────────────────────────────────────────┘
+                          │
+              ┌───────────┴───────────┐
+              │       ChromaDB        │
+              │   (Vector Storage)    │
+              └───────────────────────┘
 ```
-
-## Dependency Graph
-
-```
-Phase 4 (Complete)
-    │
-    ├── 5A Vector Storage (standalone)
-    │       │
-    │       └── 5C Literature Processing (uses embeddings)
-    │
-    ├── 5B Tool Integration (standalone)
-    │
-    ├── 5D Frontend Dashboard (depends on API from Phase 4)
-    │       │
-    │       └── 5E Authentication (integrates with frontend)
-    │
-    └── 5F Observability (standalone)
-            │
-            └── 5G Deployment (depends on all)
-```
-
-## Merge Order
-
-1. `phase5/vector` → main (5A)
-2. `phase5/tools` → main (5B)
-3. `phase5/literature` → main (5C, depends on 5A)
-4. `phase5/frontend` → main (5D)
-5. `phase5/auth` → main (5E, integrates with 5D)
-6. `phase5/observability` → main (5F)
-7. `phase5/deployment` → main (5G, final)
 
 ## Quick Links
 
 - [Phase 5A: Vector Storage](./PHASE5A_VECTOR_STORAGE.md)
-- [Phase 5B: Tool Integration](./PHASE5B_TOOL_INTEGRATION.md)
+- [Phase 5B: Literature Tools](./PHASE5B_TOOL_INTEGRATION.md)
 - [Phase 5C: Literature Processing](./PHASE5C_LITERATURE_PROCESSING.md)
 - [Phase 5D: Frontend Dashboard](./PHASE5D_FRONTEND_DASHBOARD.md)
-- [Phase 5E: Authentication](./PHASE5E_AUTHENTICATION.md)
-- [Phase 5F: Observability](./PHASE5F_OBSERVABILITY.md)
-- [Phase 5G: Deployment](./PHASE5G_DEPLOYMENT.md)
-- [Parallel Workflow Guide](./PHASE5_PARALLEL_WORKFLOW.md)
+- [Phase 5F: Observability (LangSmith)](./PHASE5F_OBSERVABILITY.md)
 
 ## Success Criteria
 
 Phase 5 is complete when:
 
-- [ ] Hypotheses have vector embeddings for semantic search
-- [ ] At least 3 scientific tools integrated (PubMed, DrugBank, AlphaFold)
-- [ ] PDF upload and citation extraction working
-- [ ] Frontend dashboard deployed with real-time updates
-- [ ] Multi-user authentication with workspace isolation
-- [ ] Prometheus metrics and Grafana dashboards live
-- [ ] Docker images built and Kubernetes manifests ready
+- [ ] ChromaDB storing hypothesis embeddings
+- [ ] PubMed search returning relevant literature
+- [ ] PDF upload and semantic search working
+- [ ] React frontend with chat, settings, visualizations
+- [ ] LangSmith traces visible for all LLM calls
 - [ ] All tests passing
-- [ ] All branches merged to main
 
-## Estimated Timeline
+## Tech Stack
 
-| Phase | Duration | Parallelizable |
-|-------|----------|----------------|
-| 5A | 1 week | Yes |
-| 5B | 2 weeks | Yes |
-| 5C | 1 week | After 5A |
-| 5D | 2 weeks | Yes |
-| 5E | 1 week | After 5D |
-| 5F | 0.5 week | Yes |
-| 5G | 0.5 week | After all |
+| Component | Technology |
+|-----------|------------|
+| Frontend | React 18 + TypeScript + Vite + Tailwind |
+| Charts | Recharts |
+| State | Zustand + React Query |
+| Vector DB | ChromaDB |
+| Observability | LangSmith |
+| Literature | PubMed API + PyMuPDF |
 
-**Total:** ~4 weeks parallel + 1 week integration = **5 weeks**
+## How to Run (Local)
 
-## Budget Estimate
+```bash
+# Terminal 1: Start backend
+uvicorn src.api.main:app --reload --port 8000
 
-- **Development/Testing:** ~$20-30 AUD (LLM API calls)
-- **Infrastructure:** Variable (depends on cloud provider)
+# Terminal 2: Start frontend
+cd frontend && npm run dev
+```
+
+Access at:
+- **Frontend:** http://localhost:5173
+- **Backend API:** http://localhost:8000
+- **API Docs:** http://localhost:8000/docs
+
+No Docker, no cloud services, no deployment configuration needed.

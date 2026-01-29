@@ -1,798 +1,537 @@
-# Phase 5F: Observability & Monitoring
+# Phase 5F: Observability with LangSmith
 
 ## Overview
 
-Implement observability infrastructure including metrics, logging, tracing, and alerting for production monitoring.
+Integrate LangSmith for LLM tracing, debugging, and cost monitoring. LangSmith provides visibility into all LangChain operations including agent executions, prompt/response pairs, and token usage.
 
-**Branch:** `phase5/observability`
-**Worktree:** `worktree-5f-observability`
 **Dependencies:** None (standalone)
-**Estimated Duration:** 0.5 weeks
+**Documentation:** https://docs.smith.langchain.com/
 
-## Stack
+## Why LangSmith
 
-| Component | Technology |
-|-----------|------------|
-| Metrics | Prometheus |
-| Visualization | Grafana |
-| Logging | Structured JSON (structlog) |
-| Tracing | OpenTelemetry (optional) |
-| Alerting | Grafana Alerts / CloudWatch |
+| Feature | Benefit |
+|---------|---------|
+| Trace Visualization | See full agent execution flow |
+| Prompt Debugging | View exact prompts sent to LLMs |
+| Response Analysis | Analyze model outputs |
+| Cost Tracking | Monitor token usage and costs |
+| Latency Metrics | Identify slow operations |
+| Error Debugging | Pinpoint failures in agent chains |
 
-## Deliverables
+## Setup
 
-### Files to Create
+### 1. Create LangSmith Account
+
+1. Go to https://smith.langchain.com/
+2. Create account / sign in
+3. Create a new project (e.g., "ai-co-scientist")
+4. Copy your API key
+
+### 2. Environment Variables
+
+Add to `03_architecture/.env`:
+
+```bash
+# LangSmith Configuration
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=your-langsmith-api-key
+LANGCHAIN_PROJECT=ai-co-scientist
+LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
+```
+
+### 3. Install Dependencies
+
+Add to `environment.yml`:
+
+```yaml
+dependencies:
+  - langsmith>=0.1.0
+```
+
+Or install directly:
+
+```bash
+pip install langsmith
+```
+
+## Implementation
+
+### Files to Create/Modify
 
 ```
 src/
-├── observability/
-│   ├── __init__.py
-│   ├── metrics.py             # Prometheus metrics
-│   ├── logging.py             # Enhanced logging
-│   └── tracing.py             # OpenTelemetry setup
-
-monitoring/
-├── prometheus/
-│   └── prometheus.yml         # Prometheus config
-├── grafana/
-│   ├── provisioning/
-│   │   └── dashboards/
-│   │       └── coscientist.json
-│   └── grafana.ini
-└── docker-compose.monitoring.yml
-
-tests/
-└── test_metrics.py
+├── llm/
+│   ├── base.py         # Add tracing callbacks
+│   ├── google.py       # Enable tracing
+│   └── openai.py       # Enable tracing
+└── observability/
+    └── tracing.py      # LangSmith utilities
 ```
 
-### 1. Prometheus Metrics (`src/observability/metrics.py`)
+### 1. Tracing Utilities (`src/observability/tracing.py`)
 
 ```python
-from prometheus_client import Counter, Histogram, Gauge, Info
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-from fastapi import Response
-import time
+"""LangSmith tracing utilities for the AI Co-Scientist system."""
+
+import os
+from typing import Optional, Dict, Any
 from functools import wraps
+from contextlib import contextmanager
 
-# Application info
-app_info = Info('coscientist', 'AI Co-Scientist application info')
-app_info.info({
-    'version': '1.0.0',
-    'phase': '5'
-})
+# Check if LangSmith is enabled
+LANGSMITH_ENABLED = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
 
-# Request metrics
-http_requests_total = Counter(
-    'http_requests_total',
-    'Total HTTP requests',
-    ['method', 'endpoint', 'status']
-)
+if LANGSMITH_ENABLED:
+    from langsmith import Client
+    from langsmith.run_trees import RunTree
+    from langchain.callbacks import LangChainTracer
 
-http_request_duration_seconds = Histogram(
-    'http_request_duration_seconds',
-    'HTTP request duration in seconds',
-    ['method', 'endpoint'],
-    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
-)
+    # Initialize LangSmith client
+    langsmith_client = Client()
+else:
+    langsmith_client = None
 
-# Agent metrics
-agent_executions_total = Counter(
-    'agent_executions_total',
-    'Total agent executions',
-    ['agent_type', 'status']
-)
 
-agent_execution_duration_seconds = Histogram(
-    'agent_execution_duration_seconds',
-    'Agent execution duration in seconds',
-    ['agent_type'],
-    buckets=[1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0]
-)
+def get_tracer(project_name: Optional[str] = None) -> Optional["LangChainTracer"]:
+    """Get a LangChain tracer for LangSmith integration.
 
-# Hypothesis metrics
-hypotheses_generated_total = Counter(
-    'hypotheses_generated_total',
-    'Total hypotheses generated',
-    ['research_goal_id']
-)
+    Args:
+        project_name: Optional project name override
 
-hypotheses_active = Gauge(
-    'hypotheses_active',
-    'Number of active hypotheses',
-    ['research_goal_id', 'status']
-)
+    Returns:
+        LangChainTracer if LangSmith is enabled, None otherwise
+    """
+    if not LANGSMITH_ENABLED:
+        return None
 
-hypothesis_elo_rating = Gauge(
-    'hypothesis_elo_rating',
-    'Current Elo rating of hypothesis',
-    ['hypothesis_id']
-)
+    return LangChainTracer(
+        project_name=project_name or os.getenv("LANGCHAIN_PROJECT", "ai-co-scientist")
+    )
 
-# Tournament metrics
-tournament_matches_total = Counter(
-    'tournament_matches_total',
-    'Total tournament matches',
-    ['research_goal_id']
-)
 
-tournament_convergence_score = Gauge(
-    'tournament_convergence_score',
-    'Tournament convergence score',
-    ['research_goal_id']
-)
+@contextmanager
+def trace_run(
+    name: str,
+    run_type: str = "chain",
+    metadata: Optional[Dict[str, Any]] = None,
+    tags: Optional[list] = None,
+):
+    """Context manager for tracing a run in LangSmith.
 
-# LLM metrics
-llm_requests_total = Counter(
-    'llm_requests_total',
-    'Total LLM API requests',
-    ['provider', 'model', 'status']
-)
+    Args:
+        name: Name of the run (e.g., "generation_agent")
+        run_type: Type of run ("chain", "llm", "tool", etc.)
+        metadata: Additional metadata to attach
+        tags: Tags for filtering in LangSmith UI
 
-llm_tokens_total = Counter(
-    'llm_tokens_total',
-    'Total LLM tokens used',
-    ['provider', 'model', 'direction']  # direction: input/output
-)
+    Example:
+        with trace_run("hypothesis_generation", metadata={"goal_id": goal.id}):
+            hypothesis = await agent.execute(goal)
+    """
+    if not LANGSMITH_ENABLED:
+        yield None
+        return
 
-llm_cost_aud_total = Counter(
-    'llm_cost_aud_total',
-    'Total LLM cost in AUD',
-    ['provider', 'model']
-)
+    run_tree = RunTree(
+        name=name,
+        run_type=run_type,
+        extra={"metadata": metadata or {}},
+        tags=tags or [],
+    )
 
-llm_request_duration_seconds = Histogram(
-    'llm_request_duration_seconds',
-    'LLM request duration in seconds',
-    ['provider', 'model'],
-    buckets=[0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0]
-)
+    try:
+        yield run_tree
+        run_tree.end()
+    except Exception as e:
+        run_tree.end(error=str(e))
+        raise
+    finally:
+        run_tree.post()
 
-# Budget metrics
-budget_remaining_aud = Gauge(
-    'budget_remaining_aud',
-    'Remaining budget in AUD'
-)
 
-budget_used_aud = Gauge(
-    'budget_used_aud',
-    'Used budget in AUD'
-)
+def trace_agent(agent_name: str):
+    """Decorator to trace agent executions in LangSmith.
 
-# Queue metrics
-task_queue_size = Gauge(
-    'task_queue_size',
-    'Number of tasks in queue',
-    ['status']  # pending, running, completed, failed
-)
+    Args:
+        agent_name: Name of the agent for tracing
 
-# Decorators for automatic metric collection
-def track_request(endpoint: str):
-    """Decorator to track HTTP request metrics."""
+    Example:
+        @trace_agent("generation")
+        async def execute(self, goal: ResearchGoal) -> Hypothesis:
+            ...
+    """
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            start_time = time.time()
-            status = "success"
-            try:
-                result = await func(*args, **kwargs)
-                return result
-            except Exception as e:
-                status = "error"
-                raise
-            finally:
-                duration = time.time() - start_time
-                http_requests_total.labels(
-                    method="POST",
-                    endpoint=endpoint,
-                    status=status
-                ).inc()
-                http_request_duration_seconds.labels(
-                    method="POST",
-                    endpoint=endpoint
-                ).observe(duration)
+            if not LANGSMITH_ENABLED:
+                return await func(*args, **kwargs)
+
+            # Extract metadata from args if available
+            metadata = {}
+            if args and hasattr(args[0], '__class__'):
+                metadata["agent_class"] = args[0].__class__.__name__
+
+            # Look for research_goal in args/kwargs
+            for arg in args[1:]:
+                if hasattr(arg, 'id'):
+                    metadata["goal_id"] = arg.id
+                    break
+
+            with trace_run(
+                name=f"{agent_name}_agent",
+                run_type="chain",
+                metadata=metadata,
+                tags=[agent_name, "agent"],
+            ):
+                return await func(*args, **kwargs)
+
         return wrapper
     return decorator
 
-def track_agent_execution(agent_type: str):
-    """Decorator to track agent execution metrics."""
+
+def trace_llm_call(provider: str, model: str):
+    """Decorator to trace individual LLM calls.
+
+    Args:
+        provider: LLM provider (google, openai)
+        model: Model name
+
+    Example:
+        @trace_llm_call("google", "gemini-1.5-pro")
+        async def invoke(self, prompt: str) -> str:
+            ...
+    """
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            start_time = time.time()
-            status = "success"
-            try:
+            if not LANGSMITH_ENABLED:
+                return await func(*args, **kwargs)
+
+            # Get prompt from args
+            prompt = args[1] if len(args) > 1 else kwargs.get("prompt", "")
+
+            with trace_run(
+                name=f"{provider}_{model}",
+                run_type="llm",
+                metadata={
+                    "provider": provider,
+                    "model": model,
+                    "prompt_length": len(prompt),
+                },
+                tags=[provider, model, "llm"],
+            ) as run:
                 result = await func(*args, **kwargs)
+
+                if run:
+                    run.outputs = {"response_length": len(result)}
+
                 return result
-            except Exception as e:
-                status = "error"
-                raise
-            finally:
-                duration = time.time() - start_time
-                agent_executions_total.labels(
-                    agent_type=agent_type,
-                    status=status
-                ).inc()
-                agent_execution_duration_seconds.labels(
-                    agent_type=agent_type
-                ).observe(duration)
+
         return wrapper
     return decorator
 
-def track_llm_request(provider: str, model: str):
-    """Decorator to track LLM request metrics."""
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            start_time = time.time()
-            status = "success"
-            try:
-                result = await func(*args, **kwargs)
-                return result
-            except Exception as e:
-                status = "error"
-                raise
-            finally:
-                duration = time.time() - start_time
-                llm_requests_total.labels(
-                    provider=provider,
-                    model=model,
-                    status=status
-                ).inc()
-                llm_request_duration_seconds.labels(
-                    provider=provider,
-                    model=model
-                ).observe(duration)
-        return wrapper
-    return decorator
 
-# FastAPI endpoint for Prometheus scraping
-async def metrics_endpoint():
-    """Prometheus metrics endpoint."""
-    return Response(
-        content=generate_latest(),
-        media_type=CONTENT_TYPE_LATEST
+def log_feedback(
+    run_id: str,
+    score: float,
+    comment: Optional[str] = None,
+    feedback_type: str = "user",
+):
+    """Log feedback for a run in LangSmith.
+
+    Useful for logging scientist ratings of hypothesis quality.
+
+    Args:
+        run_id: The run ID to attach feedback to
+        score: Numeric score (e.g., 1-5)
+        comment: Optional text feedback
+        feedback_type: Type of feedback (user, auto, etc.)
+    """
+    if not LANGSMITH_ENABLED or not langsmith_client:
+        return
+
+    langsmith_client.create_feedback(
+        run_id=run_id,
+        key=feedback_type,
+        score=score,
+        comment=comment,
     )
+
+
+def get_run_url(run_id: str) -> Optional[str]:
+    """Get the LangSmith URL for a run.
+
+    Args:
+        run_id: The run ID
+
+    Returns:
+        URL to view the run in LangSmith UI
+    """
+    if not LANGSMITH_ENABLED:
+        return None
+
+    project = os.getenv("LANGCHAIN_PROJECT", "ai-co-scientist")
+    return f"https://smith.langchain.com/projects/{project}/runs/{run_id}"
 ```
 
-### 2. Enhanced Logging (`src/observability/logging.py`)
+### 2. Update LLM Base Client (`src/llm/base.py`)
 
 ```python
-import structlog
-import logging
-import sys
-from typing import Any
-from datetime import datetime
+from abc import ABC, abstractmethod
+from typing import Any, Optional, List
+import os
 
-def setup_logging(
-    level: str = "INFO",
-    json_format: bool = True,
-    include_timestamp: bool = True
-):
-    """Configure structured logging."""
+# Import tracing utilities
+from src.observability.tracing import get_tracer, LANGSMITH_ENABLED
 
-    # Processors for structlog
-    processors = [
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.UnicodeDecoder(),
-    ]
+class BaseLLMClient(ABC):
+    """Abstract base class for LLM clients with LangSmith tracing."""
 
-    if json_format:
-        processors.append(structlog.processors.JSONRenderer())
-    else:
-        processors.append(structlog.dev.ConsoleRenderer())
+    def __init__(self, model: str, cost_tracker: Any = None):
+        self.model = model
+        self.cost_tracker = cost_tracker
 
-    structlog.configure(
-        processors=processors,
-        wrapper_class=structlog.stdlib.BoundLogger,
-        context_class=dict,
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        cache_logger_on_first_use=True,
-    )
+        # Get LangSmith tracer if enabled
+        self.tracer = get_tracer() if LANGSMITH_ENABLED else None
 
-    # Configure stdlib logging
-    logging.basicConfig(
-        format="%(message)s",
-        stream=sys.stdout,
-        level=getattr(logging, level.upper()),
-    )
+    @property
+    def callbacks(self) -> List:
+        """Get callbacks for LangChain, including tracer if enabled."""
+        if self.tracer:
+            return [self.tracer]
+        return []
 
-def get_logger(name: str) -> structlog.stdlib.BoundLogger:
-    """Get a structured logger."""
-    return structlog.get_logger(name)
+    @abstractmethod
+    def invoke(self, prompt: str) -> str:
+        """Invoke the LLM synchronously."""
+        pass
 
-# Context managers for request tracking
-class LogContext:
-    """Context manager for adding context to logs."""
-
-    def __init__(self, **kwargs):
-        self.context = kwargs
-        self.logger = get_logger(__name__)
-
-    def __enter__(self):
-        structlog.contextvars.bind_contextvars(**self.context)
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        structlog.contextvars.unbind_contextvars(*self.context.keys())
-
-# Logging utilities
-def log_agent_execution(
-    agent_type: str,
-    research_goal_id: str,
-    duration_seconds: float,
-    success: bool,
-    **extra
-):
-    """Log agent execution with structured data."""
-    logger = get_logger("agent")
-    log_method = logger.info if success else logger.error
-
-    log_method(
-        "agent_execution",
-        agent_type=agent_type,
-        research_goal_id=research_goal_id,
-        duration_seconds=duration_seconds,
-        success=success,
-        **extra
-    )
-
-def log_llm_request(
-    provider: str,
-    model: str,
-    input_tokens: int,
-    output_tokens: int,
-    cost_aud: float,
-    duration_seconds: float,
-    **extra
-):
-    """Log LLM request with structured data."""
-    logger = get_logger("llm")
-    logger.info(
-        "llm_request",
-        provider=provider,
-        model=model,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        cost_aud=cost_aud,
-        duration_seconds=duration_seconds,
-        **extra
-    )
-
-def log_hypothesis_created(
-    hypothesis_id: str,
-    research_goal_id: str,
-    title: str,
-    method: str
-):
-    """Log hypothesis creation."""
-    logger = get_logger("hypothesis")
-    logger.info(
-        "hypothesis_created",
-        hypothesis_id=hypothesis_id,
-        research_goal_id=research_goal_id,
-        title=title,
-        generation_method=method
-    )
-
-def log_tournament_match(
-    match_id: str,
-    hypothesis_a_id: str,
-    hypothesis_b_id: str,
-    winner_id: str,
-    elo_change: float
-):
-    """Log tournament match result."""
-    logger = get_logger("tournament")
-    logger.info(
-        "tournament_match",
-        match_id=match_id,
-        hypothesis_a_id=hypothesis_a_id,
-        hypothesis_b_id=hypothesis_b_id,
-        winner_id=winner_id,
-        elo_change=elo_change
-    )
+    @abstractmethod
+    async def ainvoke(self, prompt: str) -> str:
+        """Invoke the LLM asynchronously."""
+        pass
 ```
 
-### 3. Prometheus Configuration (`monitoring/prometheus/prometheus.yml`)
-
-```yaml
-global:
-  scrape_interval: 15s
-  evaluation_interval: 15s
-
-alerting:
-  alertmanagers:
-    - static_configs:
-        - targets: []
-
-rule_files:
-  - "alerts.yml"
-
-scrape_configs:
-  - job_name: 'coscientist'
-    static_configs:
-      - targets: ['host.docker.internal:8000']
-    metrics_path: '/metrics'
-
-  - job_name: 'prometheus'
-    static_configs:
-      - targets: ['localhost:9090']
-```
-
-### 4. Alert Rules (`monitoring/prometheus/alerts.yml`)
-
-```yaml
-groups:
-  - name: coscientist_alerts
-    rules:
-      # High error rate
-      - alert: HighErrorRate
-        expr: rate(http_requests_total{status="error"}[5m]) > 0.1
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: High error rate detected
-          description: Error rate is {{ $value | printf "%.2f" }} requests/sec
-
-      # Budget running low
-      - alert: BudgetLow
-        expr: budget_remaining_aud < 5
-        for: 1m
-        labels:
-          severity: warning
-        annotations:
-          summary: Budget running low
-          description: Only ${{ $value | printf "%.2f" }} AUD remaining
-
-      # Budget exhausted
-      - alert: BudgetExhausted
-        expr: budget_remaining_aud <= 0
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: Budget exhausted
-          description: No budget remaining
-
-      # Agent taking too long
-      - alert: SlowAgentExecution
-        expr: histogram_quantile(0.95, rate(agent_execution_duration_seconds_bucket[5m])) > 300
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: Agent executions are slow
-          description: 95th percentile agent execution time is {{ $value | printf "%.0f" }} seconds
-
-      # LLM API errors
-      - alert: LLMAPIErrors
-        expr: rate(llm_requests_total{status="error"}[5m]) > 0.05
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: LLM API errors detected
-          description: LLM error rate is {{ $value | printf "%.3f" }} requests/sec
-
-      # Queue buildup
-      - alert: TaskQueueBacklog
-        expr: task_queue_size{status="pending"} > 50
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: Task queue backlog
-          description: {{ $value }} pending tasks in queue
-```
-
-### 5. Grafana Dashboard (`monitoring/grafana/provisioning/dashboards/coscientist.json`)
-
-```json
-{
-  "dashboard": {
-    "id": null,
-    "title": "AI Co-Scientist Dashboard",
-    "tags": ["coscientist"],
-    "timezone": "browser",
-    "panels": [
-      {
-        "title": "Request Rate",
-        "type": "graph",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
-        "targets": [
-          {
-            "expr": "rate(http_requests_total[5m])",
-            "legendFormat": "{{method}} {{endpoint}}"
-          }
-        ]
-      },
-      {
-        "title": "Request Duration (p95)",
-        "type": "graph",
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
-        "targets": [
-          {
-            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
-            "legendFormat": "{{endpoint}}"
-          }
-        ]
-      },
-      {
-        "title": "Budget Status",
-        "type": "gauge",
-        "gridPos": {"h": 8, "w": 6, "x": 0, "y": 8},
-        "targets": [
-          {
-            "expr": "budget_remaining_aud",
-            "legendFormat": "Remaining"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "max": 50,
-            "min": 0,
-            "unit": "currencyAUD",
-            "thresholds": {
-              "steps": [
-                {"color": "red", "value": 0},
-                {"color": "yellow", "value": 10},
-                {"color": "green", "value": 25}
-              ]
-            }
-          }
-        }
-      },
-      {
-        "title": "LLM Cost Over Time",
-        "type": "graph",
-        "gridPos": {"h": 8, "w": 18, "x": 6, "y": 8},
-        "targets": [
-          {
-            "expr": "increase(llm_cost_aud_total[1h])",
-            "legendFormat": "{{provider}} {{model}}"
-          }
-        ]
-      },
-      {
-        "title": "Agent Executions",
-        "type": "graph",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
-        "targets": [
-          {
-            "expr": "rate(agent_executions_total[5m])",
-            "legendFormat": "{{agent_type}}"
-          }
-        ]
-      },
-      {
-        "title": "Tournament Convergence",
-        "type": "graph",
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
-        "targets": [
-          {
-            "expr": "tournament_convergence_score",
-            "legendFormat": "{{research_goal_id}}"
-          }
-        ]
-      },
-      {
-        "title": "Hypothesis Count by Status",
-        "type": "piechart",
-        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 24},
-        "targets": [
-          {
-            "expr": "sum(hypotheses_active) by (status)",
-            "legendFormat": "{{status}}"
-          }
-        ]
-      },
-      {
-        "title": "Task Queue",
-        "type": "graph",
-        "gridPos": {"h": 8, "w": 16, "x": 8, "y": 24},
-        "targets": [
-          {
-            "expr": "task_queue_size",
-            "legendFormat": "{{status}}"
-          }
-        ]
-      }
-    ],
-    "refresh": "30s",
-    "time": {"from": "now-6h", "to": "now"}
-  }
-}
-```
-
-### 6. Docker Compose for Monitoring (`monitoring/docker-compose.monitoring.yml`)
-
-```yaml
-version: '3.8'
-
-services:
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: coscientist-prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.enable-lifecycle'
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-  grafana:
-    image: grafana/grafana:latest
-    container_name: coscientist-grafana
-    ports:
-      - "3001:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-    volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning
-      - grafana_data:/var/lib/grafana
-    depends_on:
-      - prometheus
-
-volumes:
-  prometheus_data:
-  grafana_data:
-```
-
-### 7. FastAPI Integration
-
-Update `src/api/main.py`:
+### 3. Update Google Client (`src/llm/google.py`)
 
 ```python
-from fastapi import FastAPI
-from src.observability.metrics import metrics_endpoint
-from src.observability.logging import setup_logging
+from langchain_google_genai import ChatGoogleGenerativeAI
+from .base import BaseLLMClient
+from src.observability.tracing import trace_llm_call
 
-# Initialize logging
-setup_logging(level="INFO", json_format=True)
+class GoogleGeminiClient(BaseLLMClient):
+    """Google Gemini LLM client with LangSmith tracing."""
 
-app = FastAPI(title="AI Co-Scientist API")
+    def __init__(self, model: str, cost_tracker: Any = None):
+        super().__init__(model, cost_tracker)
 
-# Metrics endpoint
-@app.get("/metrics")
-async def metrics():
-    return await metrics_endpoint()
-```
-
-### 8. Agent Integration Example
-
-```python
-# In src/agents/generation.py
-from src.observability.metrics import (
-    track_agent_execution,
-    hypotheses_generated_total,
-    hypothesis_elo_rating
-)
-from src.observability.logging import log_hypothesis_created
-
-class GenerationAgent(BaseAgent):
-
-    @track_agent_execution("generation")
-    async def execute(self, research_goal: ResearchGoal, **kwargs) -> Hypothesis:
-        # ... existing code ...
-
-        hypothesis = await self._generate_hypothesis(...)
-
-        # Update metrics
-        hypotheses_generated_total.labels(
-            research_goal_id=research_goal.id
-        ).inc()
-
-        hypothesis_elo_rating.labels(
-            hypothesis_id=hypothesis.id
-        ).set(hypothesis.elo_rating)
-
-        # Log
-        log_hypothesis_created(
-            hypothesis_id=hypothesis.id,
-            research_goal_id=research_goal.id,
-            title=hypothesis.title,
-            method=kwargs.get("method", "literature")
+        self.llm = ChatGoogleGenerativeAI(
+            model=model,
+            temperature=0.7,
+            max_output_tokens=8192,
+            callbacks=self.callbacks,  # Add tracing callbacks
         )
 
-        return hypothesis
+    def invoke(self, prompt: str) -> str:
+        """Invoke Gemini synchronously with tracing."""
+        response = self.llm.invoke(prompt)
+        return response.content
+
+    @trace_llm_call("google", "gemini")
+    async def ainvoke(self, prompt: str) -> str:
+        """Invoke Gemini asynchronously with tracing."""
+        response = await self.llm.ainvoke(prompt)
+
+        # Track cost if tracker available
+        if self.cost_tracker:
+            input_tokens = len(prompt.split()) * 1.3
+            output_tokens = len(response.content.split()) * 1.3
+            self.cost_tracker.track_usage(
+                model=self.model,
+                input_tokens=int(input_tokens),
+                output_tokens=int(output_tokens),
+            )
+
+        return response.content
 ```
 
-## Running Monitoring Stack
-
-```bash
-# Start monitoring stack
-cd monitoring
-docker-compose -f docker-compose.monitoring.yml up -d
-
-# Access
-# Prometheus: http://localhost:9090
-# Grafana: http://localhost:3001 (admin/admin)
-```
-
-## Test Cases (`tests/test_metrics.py`)
+### 4. Update OpenAI Client (`src/llm/openai.py`)
 
 ```python
+from langchain_openai import ChatOpenAI
+from .base import BaseLLMClient
+from src.observability.tracing import trace_llm_call
+
+class OpenAIClient(BaseLLMClient):
+    """OpenAI LLM client with LangSmith tracing."""
+
+    def __init__(self, model: str, cost_tracker: Any = None):
+        super().__init__(model, cost_tracker)
+
+        self.llm = ChatOpenAI(
+            model=model,
+            temperature=0.7,
+            max_tokens=8192,
+            callbacks=self.callbacks,  # Add tracing callbacks
+        )
+
+    def invoke(self, prompt: str) -> str:
+        """Invoke OpenAI synchronously with tracing."""
+        response = self.llm.invoke(prompt)
+        return response.content
+
+    @trace_llm_call("openai", "gpt")
+    async def ainvoke(self, prompt: str) -> str:
+        """Invoke OpenAI asynchronously with tracing."""
+        response = await self.llm.ainvoke(prompt)
+
+        if self.cost_tracker:
+            input_tokens = len(prompt.split()) * 1.3
+            output_tokens = len(response.content.split()) * 1.3
+            self.cost_tracker.track_usage(
+                model=self.model,
+                input_tokens=int(input_tokens),
+                output_tokens=int(output_tokens),
+            )
+
+        return response.content
+```
+
+### 5. Update Agents with Tracing
+
+Example for Generation Agent (`src/agents/generation.py`):
+
+```python
+from src.observability.tracing import trace_agent
+
+class GenerationAgent(BaseAgent):
+    """Generation agent with LangSmith tracing."""
+
+    @trace_agent("generation")
+    async def execute(
+        self,
+        research_goal: ResearchGoal,
+        method: str = "literature",
+        **kwargs
+    ) -> Hypothesis:
+        """Generate a hypothesis with full tracing."""
+        # ... existing implementation ...
+        pass
+```
+
+## Viewing Traces
+
+### LangSmith Dashboard
+
+1. Go to https://smith.langchain.com/
+2. Select your project ("ai-co-scientist")
+3. View runs in the "Runs" tab
+
+### What You'll See
+
+- **Run Tree**: Full hierarchy of agent calls
+- **Inputs/Outputs**: Exact prompts and responses
+- **Latency**: Time taken for each step
+- **Token Counts**: Input/output tokens per call
+- **Errors**: Stack traces for failures
+- **Metadata**: Custom tags and metadata
+
+### Filtering Runs
+
+Use tags to filter runs:
+- `generation` - Generation agent runs
+- `reflection` - Reflection agent runs
+- `ranking` - Ranking/tournament runs
+- `llm` - Raw LLM calls
+
+## Cost Tracking
+
+LangSmith automatically tracks token usage. View in the dashboard:
+
+1. Go to project settings
+2. View "Usage" tab
+3. See breakdown by model, run type, and time
+
+## Testing Tracing
+
+```python
+# tests/test_tracing.py
 import pytest
-from src.observability.metrics import (
-    http_requests_total,
-    agent_executions_total,
-    track_request
+import os
+
+# Enable tracing for tests
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+
+from src.observability.tracing import (
+    LANGSMITH_ENABLED,
+    get_tracer,
+    trace_run,
+    trace_agent,
 )
 
-def test_request_counter():
-    """Test HTTP request counter."""
-    initial = http_requests_total.labels(
-        method="GET",
-        endpoint="/test",
-        status="success"
-    )._value.get()
 
-    http_requests_total.labels(
-        method="GET",
-        endpoint="/test",
-        status="success"
-    ).inc()
+def test_langsmith_enabled():
+    """Test LangSmith is properly configured."""
+    assert LANGSMITH_ENABLED == True
 
-    new_value = http_requests_total.labels(
-        method="GET",
-        endpoint="/test",
-        status="success"
-    )._value.get()
 
-    assert new_value == initial + 1
+def test_get_tracer():
+    """Test tracer creation."""
+    tracer = get_tracer()
+    assert tracer is not None
+
 
 @pytest.mark.asyncio
-async def test_track_request_decorator():
-    """Test request tracking decorator."""
+async def test_trace_run():
+    """Test trace_run context manager."""
+    with trace_run("test_run", metadata={"test": True}) as run:
+        assert run is not None
 
-    @track_request("/test")
-    async def test_endpoint():
-        return {"status": "ok"}
 
-    result = await test_endpoint()
-    assert result == {"status": "ok"}
+@pytest.mark.asyncio
+async def test_trace_agent_decorator():
+    """Test trace_agent decorator."""
+
+    @trace_agent("test")
+    async def mock_agent_execute():
+        return "result"
+
+    result = await mock_agent_execute()
+    assert result == "result"
 ```
 
 ## Success Criteria
 
-- [ ] Prometheus metrics endpoint `/metrics` working
-- [ ] Key metrics being collected (requests, agents, LLM, budget)
-- [ ] Grafana dashboard showing real-time data
-- [ ] Alert rules configured
-- [ ] Structured JSON logging working
-- [ ] Docker Compose stack running
-- [ ] All tests passing
+- [ ] LangSmith API key configured
+- [ ] Traces appearing in LangSmith dashboard
+- [ ] Agent executions showing full call hierarchy
+- [ ] LLM calls showing prompts and responses
+- [ ] Token usage tracked per call
+- [ ] Errors captured with stack traces
+- [ ] Tests passing with tracing enabled
 
-## AWS CloudWatch Integration (Optional)
+## Troubleshooting
 
-For AWS deployment, metrics can be pushed to CloudWatch:
+### Traces Not Appearing
 
-```python
-import boto3
+1. Check `LANGCHAIN_TRACING_V2=true` is set
+2. Verify `LANGCHAIN_API_KEY` is valid
+3. Check project name matches in UI
+4. Ensure callbacks are passed to LangChain objects
 
-cloudwatch = boto3.client('cloudwatch')
+### Performance Impact
 
-def push_to_cloudwatch(metric_name: str, value: float, unit: str = 'Count'):
-    cloudwatch.put_metric_data(
-        Namespace='CoScientist',
-        MetricData=[{
-            'MetricName': metric_name,
-            'Value': value,
-            'Unit': unit
-        }]
-    )
-```
+LangSmith tracing adds minimal overhead (~10-50ms per trace). For production, you can:
+
+1. Disable tracing: `LANGCHAIN_TRACING_V2=false`
+2. Use sampling: Only trace a percentage of requests
+3. Use async posting: Traces are posted asynchronously by default
+
+## Next Steps
+
+After enabling LangSmith:
+
+1. Create custom dashboards for monitoring
+2. Set up alerts for errors or high latency
+3. Use feedback to improve prompts
+4. Compare model performance across runs
