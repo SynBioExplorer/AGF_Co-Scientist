@@ -13,6 +13,13 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
     tavily_api_key: str | None = None
+    pubmed_api_key: str | None = None
+
+    # LangSmith Observability (Phase 5F)
+    langchain_tracing_v2: bool = False
+    langchain_api_key: str | None = None
+    langchain_project: str = "ai-coscientist"
+    langchain_endpoint: str = "https://api.smith.langchain.com"
 
     # LLM Provider Selection (change this to switch providers globally)
     llm_provider: Literal["google", "openai"] = "google"
@@ -26,6 +33,17 @@ class Settings(BaseSettings):
 
     # Redis Configuration (for caching)
     redis_url: str = "redis://localhost:6379/0"
+
+    # Vector Storage Configuration (Phase 5A - Vector Storage)
+    # Options: "chroma" (local), "pgvector" (PostgreSQL with pgvector extension)
+    vector_store_type: Literal["chroma", "pgvector"] = "chroma"
+    chroma_persist_directory: str = "./chroma_db"
+
+    # Embedding Provider Configuration (Phase 5A)
+    # Options: "google" (text-embedding-004), "openai" (text-embedding-3-small)
+    embedding_provider: Literal["google", "openai"] = "google"
+    google_embedding_model: str = "text-embedding-004"
+    openai_embedding_model: str = "text-embedding-3-small"
 
     # API Server Configuration (Phase 4 - API Agent)
     api_host: str = "0.0.0.0"
@@ -53,6 +71,10 @@ class Settings(BaseSettings):
     # System Configuration
     budget_aud: float = 50.0
     max_workers: int = 4
+
+    # Tool Configuration (Phase 5B - Literature Tools)
+    tool_timeout_seconds: int = 30
+    tool_max_results: int = 10
 
     # Paths
     project_root: Path = Path(__file__).parent.parent

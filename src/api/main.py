@@ -559,6 +559,14 @@ async def get_task_status(task_id: str):
 from src.api.chat import router as chat_router
 app.include_router(chat_router, prefix="/api/v1", tags=["Chat"])
 
+# Import and include tools router
+from src.api.tools import router as tools_router
+app.include_router(tools_router, prefix="/api/v1", tags=["Tools"])
+
+# Import and include documents router
+from src.api.documents import router as documents_router
+app.include_router(documents_router, prefix="/api/v1", tags=["Documents"])
+
 
 # ==============================================================================
 # Run server
