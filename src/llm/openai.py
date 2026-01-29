@@ -4,6 +4,7 @@ from langchain_openai import ChatOpenAI
 from src.llm.base import BaseLLMClient
 from src.config import settings
 from src.utils.errors import LLMClientError
+from src.observability.tracing import trace_llm_call
 import sys
 sys.path.append(str(settings.project_root / "04_Scripts"))
 from cost_tracker import get_tracker
@@ -25,7 +26,8 @@ class OpenAIClient(BaseLLMClient):
             model=model,
             api_key=settings.openai_api_key,
             temperature=0.7,
-            max_tokens=8192
+            max_tokens=8192,
+            callbacks=self.callbacks  # Add tracing callbacks
         )
 
     def invoke(self, prompt: str) -> str:
@@ -52,6 +54,7 @@ class OpenAIClient(BaseLLMClient):
         except Exception as e:
             raise LLMClientError(f"OpenAI invocation failed: {e}")
 
+    @trace_llm_call("openai", "gpt")
     async def ainvoke(self, prompt: str) -> str:
         """Async invoke for parallel execution"""
         try:

@@ -59,6 +59,7 @@ from src.config import settings
 from src.utils.ids import generate_id, generate_task_id
 from src.utils.json_parser import parse_llm_json
 from src.utils.strategy_selector import select_evolution_strategy
+from src.observability.tracing import trace_agent
 
 import structlog
 
@@ -150,6 +151,7 @@ class SupervisorAgent(BaseAgent):
                 self._agents[agent_type] = MetaReviewAgent()
         return self._agents.get(agent_type)
 
+    @trace_agent("SupervisorAgent")
     async def execute(
         self,
         research_goal: ResearchGoal,

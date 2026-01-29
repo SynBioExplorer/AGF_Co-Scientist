@@ -4,6 +4,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from src.llm.base import BaseLLMClient
 from src.config import settings
 from src.utils.errors import LLMClientError
+from src.observability.tracing import trace_llm_call
 import sys
 sys.path.append(str(settings.project_root / "04_Scripts"))
 from cost_tracker import get_tracker
@@ -21,7 +22,8 @@ class GoogleGeminiClient(BaseLLMClient):
             model=model,
             google_api_key=settings.google_api_key,
             temperature=0.7,
-            max_output_tokens=8192
+            max_output_tokens=8192,
+            callbacks=self.callbacks  # Add tracing callbacks
         )
 
     def invoke(self, prompt: str) -> str:
@@ -61,6 +63,7 @@ class GoogleGeminiClient(BaseLLMClient):
         except Exception as e:
             raise LLMClientError(f"Gemini invocation failed: {e}")
 
+    @trace_llm_call("google", "gemini")
     async def ainvoke(self, prompt: str) -> str:
         """Async invoke for parallel execution"""
         try:

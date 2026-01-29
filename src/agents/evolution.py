@@ -13,6 +13,7 @@ from src.prompts.loader import prompt_manager
 from src.utils.ids import generate_hypothesis_id
 from src.utils.errors import CoScientistError
 from src.config import settings
+from src.observability.tracing import trace_agent
 import json
 
 
@@ -26,6 +27,7 @@ class EvolutionAgent(BaseAgent):
         )
         super().__init__(llm_client, "EvolutionAgent")
 
+    @trace_agent("EvolutionAgent")
     def execute(
         self,
         hypothesis: Hypothesis,

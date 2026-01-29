@@ -1,6 +1,6 @@
 """Proximity Agent - Build similarity graphs and cluster hypotheses"""
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Dict
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent / "03_architecture"))
@@ -11,19 +11,45 @@ from src.llm.factory import get_llm_client
 from src.config import settings
 from src.utils.errors import CoScientistError
 from src.utils.ids import generate_id
+from src.observability.tracing import trace_agent
 import json
 
 
 class ProximityAgent(BaseAgent):
-    """Build similarity graphs and cluster similar hypotheses"""
+    """Build similarity graphs and cluster similar hypotheses
 
-    def __init__(self):
+    Supports both vector-based similarity (fast, using embeddings) and
+    LLM-based similarity (slower, more nuanced). Falls back to LLM
+    when vector store is not available.
+    """
+
+    def __init__(
+        self,
+        vector_store=None,
+        embedding_client=None,
+        use_vectors: bool = True
+    ):
+        """Initialize Proximity Agent
+
+        Args:
+            vector_store: Optional vector store for fast similarity search
+            embedding_client: Optional embedding client for generating vectors
+            use_vectors: Whether to use vector similarity (requires vector_store and embedding_client)
+        """
         llm_client = get_llm_client(
             model=settings.supervisor_model,  # Use fast model for similarity
             agent_name="proximity"
         )
         super().__init__(llm_client, "ProximityAgent")
 
+        self.vector_store = vector_store
+        self.embedding_client = embedding_client
+        self.use_vectors = use_vectors and vector_store is not None and embedding_client is not None
+
+        # Cache embeddings to avoid regenerating
+        self._embedding_cache: Dict[str, List[float]] = {}
+
+    @trace_agent("ProximityAgent")
     def execute(
         self,
         hypotheses: List[Hypothesis],
@@ -44,17 +70,24 @@ class ProximityAgent(BaseAgent):
         self.log_execution(
             task="proximity_graph_building",
             num_hypotheses=len(hypotheses),
-            threshold=similarity_threshold
+            threshold=similarity_threshold,
+            using_vectors=self.use_vectors
         )
 
         # Calculate pairwise similarities
         edges = []
         for i in range(len(hypotheses)):
             for j in range(i + 1, len(hypotheses)):
-                similarity = self._calculate_similarity(
-                    hypotheses[i],
-                    hypotheses[j]
-                )
+                if self.use_vectors:
+                    similarity = self._calculate_vector_similarity(
+                        hypotheses[i],
+                        hypotheses[j]
+                    )
+                else:
+                    similarity = self._calculate_llm_similarity(
+                        hypotheses[i],
+                        hypotheses[j]
+                    )
 
                 if similarity >= similarity_threshold:
                     edge = ProximityEdge(
@@ -88,12 +121,139 @@ class ProximityAgent(BaseAgent):
             clusters=clusters
         )
 
-    def _calculate_similarity(
+    def find_similar(
+        self,
+        hypothesis: Hypothesis,
+        min_similarity: float = 0.7,
+        limit: int = 10
+    ) -> List[Tuple[str, float]]:
+        """Find similar hypotheses to the given one
+
+        Args:
+            hypothesis: The hypothesis to find similar ones for
+            min_similarity: Minimum similarity threshold
+            limit: Maximum number of similar hypotheses to return
+
+        Returns:
+            List of (hypothesis_id, similarity_score) tuples
+        """
+        if not self.use_vectors:
+            self.logger.warning(
+                "find_similar called without vector support",
+                falling_back_to="full graph computation"
+            )
+            return []
+
+        # Get embedding for the hypothesis
+        embedding = self._get_embedding(hypothesis)
+
+        # Search vector store
+        import asyncio
+        results = asyncio.run(self.vector_store.search(
+            query_embedding=embedding,
+            collection_name="hypotheses",
+            limit=limit,
+            min_similarity=min_similarity
+        ))
+
+        # Convert to (id, score) tuples, excluding the query hypothesis itself
+        similar = [
+            (result.document.metadata.get("hypothesis_id", result.document.id), result.similarity)
+            for result in results
+            if result.document.metadata.get("hypothesis_id") != hypothesis.id
+        ]
+
+        return similar[:limit]
+
+    def _get_embedding(self, hypothesis: Hypothesis) -> List[float]:
+        """Get or compute embedding for a hypothesis
+
+        Args:
+            hypothesis: The hypothesis to embed
+
+        Returns:
+            Embedding vector
+        """
+        # Check cache first
+        if hypothesis.id in self._embedding_cache:
+            return self._embedding_cache[hypothesis.id]
+
+        # Create text representation for embedding
+        text = self._hypothesis_to_text(hypothesis)
+
+        # Generate embedding
+        embedding = self.embedding_client.embed(text)
+
+        # Cache it
+        self._embedding_cache[hypothesis.id] = embedding
+
+        return embedding
+
+    def _hypothesis_to_text(self, hypothesis: Hypothesis) -> str:
+        """Convert hypothesis to text for embedding
+
+        Args:
+            hypothesis: The hypothesis
+
+        Returns:
+            Text representation
+        """
+        parts = [
+            f"Title: {hypothesis.title}",
+            f"Statement: {hypothesis.hypothesis_statement}",
+        ]
+
+        if hypothesis.mechanism:
+            parts.append(f"Mechanism: {hypothesis.mechanism}")
+
+        if hypothesis.rationale:
+            parts.append(f"Rationale: {hypothesis.rationale[:200]}")
+
+        return "\n".join(parts)
+
+    def _calculate_vector_similarity(
         self,
         hyp_a: Hypothesis,
         hyp_b: Hypothesis
     ) -> float:
-        """Calculate similarity between two hypotheses using LLM"""
+        """Calculate similarity using vector embeddings
+
+        Args:
+            hyp_a: First hypothesis
+            hyp_b: Second hypothesis
+
+        Returns:
+            Cosine similarity score (0.0 to 1.0)
+        """
+        try:
+            embedding_a = self._get_embedding(hyp_a)
+            embedding_b = self._get_embedding(hyp_b)
+
+            # Calculate cosine similarity
+            from src.storage.vector import BaseVectorStore
+            similarity = BaseVectorStore.cosine_similarity(embedding_a, embedding_b)
+
+            return float(similarity)
+
+        except Exception as e:
+            self.logger.warning(
+                "Vector similarity calculation failed, falling back to LLM",
+                error=str(e),
+                hyp_a_id=hyp_a.id,
+                hyp_b_id=hyp_b.id
+            )
+            return self._calculate_llm_similarity(hyp_a, hyp_b)
+
+    def _calculate_llm_similarity(
+        self,
+        hyp_a: Hypothesis,
+        hyp_b: Hypothesis
+    ) -> float:
+        """Calculate similarity between two hypotheses using LLM
+
+        This is the fallback method when vector embeddings are not available.
+        More nuanced but slower than vector-based similarity.
+        """
 
         prompt = f"""Compare the similarity of these two scientific hypotheses on a scale of 0.0 to 1.0.
 

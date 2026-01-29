@@ -15,6 +15,7 @@ from src.prompts.loader import prompt_manager
 from src.config import settings
 from src.utils.errors import CoScientistError
 from src.utils.ids import generate_id
+from src.observability.tracing import trace_agent
 import json
 
 
@@ -28,6 +29,7 @@ class MetaReviewAgent(BaseAgent):
         )
         super().__init__(llm_client, "MetaReviewAgent")
 
+    @trace_agent("MetaReviewAgent")
     def execute(
         self,
         reviews: List[Review],
@@ -124,6 +126,7 @@ Respond with ONLY the JSON object, no additional text."""
         except (json.JSONDecodeError, KeyError) as e:
             raise CoScientistError(f"Failed to parse meta-review response: {e}\nResponse: {response[:500]}")
 
+    @trace_agent("MetaReviewAgent")
     def generate_research_overview(
         self,
         goal: str,

@@ -13,6 +13,7 @@ from src.prompts.loader import prompt_manager
 from src.utils.ids import generate_review_id
 from src.utils.errors import CoScientistError
 from src.config import settings
+from src.observability.tracing import trace_agent
 import json
 
 
@@ -26,6 +27,7 @@ class ReflectionAgent(BaseAgent):
         )
         super().__init__(llm_client, "ReflectionAgent")
 
+    @trace_agent("ReflectionAgent")
     def execute(
         self,
         hypothesis: Hypothesis,

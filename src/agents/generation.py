@@ -17,6 +17,7 @@ from src.utils.errors import CoScientistError
 from src.utils.web_search import get_search_client
 from src.utils.json_parser import parse_llm_json
 from src.config import settings
+from src.observability.tracing import trace_agent
 import json
 
 
@@ -30,6 +31,7 @@ class GenerationAgent(BaseAgent):
         )
         super().__init__(llm_client, "GenerationAgent")
 
+    @trace_agent("GenerationAgent")
     def execute(
         self,
         research_goal: ResearchGoal,

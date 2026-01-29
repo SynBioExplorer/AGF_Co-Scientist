@@ -13,6 +13,7 @@ from src.prompts.loader import prompt_manager
 from src.utils.ids import generate_match_id
 from src.utils.errors import CoScientistError
 from src.config import settings
+from src.observability.tracing import trace_agent
 import json
 
 
@@ -26,6 +27,7 @@ class RankingAgent(BaseAgent):
         )
         super().__init__(llm_client, "RankingAgent")
 
+    @trace_agent("RankingAgent")
     def execute(
         self,
         hypothesis_a: Hypothesis,
