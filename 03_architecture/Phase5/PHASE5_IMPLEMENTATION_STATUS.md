@@ -39,12 +39,13 @@ Track implementation progress for Phase 5 features.
 ### Phase 5C: Literature Processing
 | Feature | Status | Notes |
 |---------|--------|-------|
-| PDF parser (PyMuPDF) | :hourglass: | |
-| Text chunker | :hourglass: | |
-| Citation extractor | :hourglass: | |
-| Literature repository | :hourglass: | |
-| Upload endpoint | :hourglass: | |
-| Search endpoint | :hourglass: | |
+| PDF parser (PyMuPDF) | :white_check_mark: | Fully implemented and tested |
+| Text chunker | :white_check_mark: | Working with overlap support |
+| Citation extractor | :white_check_mark: | Author-year and numeric citations |
+| Citation graph | :white_check_mark: | Graph analysis and statistics |
+| Literature repository | :white_check_mark: | Vector integration complete |
+| Upload endpoint | :hourglass: | Planned for API integration |
+| Search endpoint | :hourglass: | Planned for API integration |
 
 ### Phase 5D: Frontend Dashboard
 | Feature | Status | Notes |
