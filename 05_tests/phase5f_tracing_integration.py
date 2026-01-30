@@ -4,6 +4,13 @@ Tests that tracing decorators work correctly with real agent implementations
 and LLM clients, both when tracing is enabled and disabled.
 """
 
+import sys
+from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 import os
 import pytest
 from unittest.mock import patch, Mock

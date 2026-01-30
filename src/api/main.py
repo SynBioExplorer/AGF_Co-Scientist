@@ -1,10 +1,11 @@
 """FastAPI application for AI Co-Scientist system"""
 
-from fastapi import FastAPI, HTTPException, Query, Depends
+from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, List
 import sys
+import os
 from pathlib import Path
 
 # Add project root to path for imports
@@ -24,6 +25,7 @@ from src.api.models import (
     FeedbackResponse,
     WorkflowConfigRequest,
 )
+from pydantic import BaseModel
 from src.api.background import task_manager
 from src.storage.async_adapter import async_storage as storage
 from src.agents.supervisor import SupervisorAgent
@@ -66,6 +68,60 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ==============================================================================
+# Middleware for API Key Injection
+# ==============================================================================
+
+
+@app.middleware("http")
+async def inject_api_keys_middleware(request: Request, call_next):
+    """Inject API keys from headers into environment variables.
+
+    This allows the frontend to dynamically provide API keys that override
+    the .env file configuration. Useful for multi-user scenarios or when
+    users want to use their own API keys.
+    """
+    # Store original env vars to restore after request
+    original_env = {}
+
+    # Map headers to environment variables
+    header_env_map = {
+        "x-google-api-key": "GOOGLE_API_KEY",
+        "x-openai-api-key": "OPENAI_API_KEY",
+        "x-tavily-api-key": "TAVILY_API_KEY",
+        "x-langsmith-api-key": "LANGCHAIN_API_KEY",
+    }
+
+    # Inject API keys from headers
+    for header, env_var in header_env_map.items():
+        if header in request.headers:
+            # Save original value
+            original_env[env_var] = os.environ.get(env_var)
+            # Set new value from header
+            os.environ[env_var] = request.headers[header]
+
+    # Enable LangSmith tracing if API key provided
+    if "x-langsmith-api-key" in request.headers:
+        original_env["LANGCHAIN_TRACING_V2"] = os.environ.get("LANGCHAIN_TRACING_V2")
+        os.environ["LANGCHAIN_TRACING_V2"] = "true"
+        # Set project name if not already set
+        if "LANGCHAIN_PROJECT" not in os.environ:
+            original_env["LANGCHAIN_PROJECT"] = None
+            os.environ["LANGCHAIN_PROJECT"] = "ai-coscientist"
+
+    try:
+        # Process request
+        response = await call_next(request)
+        return response
+    finally:
+        # Restore original environment variables
+        for env_var, original_value in original_env.items():
+            if original_value is None:
+                os.environ.pop(env_var, None)
+            else:
+                os.environ[env_var] = original_value
 
 
 # ==============================================================================
@@ -184,11 +240,17 @@ async def health_check():
 # ==============================================================================
 
 
-@app.post("/goals", response_model=GoalStatusResponse, tags=["Goals"])
-async def submit_goal(
-    request: SubmitGoalRequest,
+class SubmitGoalWithConfigRequest(BaseModel):
+    """Combined request for goal submission with config"""
+    description: str
+    constraints: List[str] = []
+    preferences: List[str] = []
+    prior_publications: List[str] = []
     config: Optional[WorkflowConfigRequest] = None
-):
+
+
+@app.post("/goals", response_model=GoalStatusResponse, tags=["Goals"])
+async def submit_goal(request: SubmitGoalWithConfigRequest):
     """Submit a new research goal and start the workflow.
 
     This endpoint creates a new research goal and starts the hypothesis
@@ -201,8 +263,7 @@ async def submit_goal(
     )
 
     # Use default config if not provided
-    if config is None:
-        config = WorkflowConfigRequest()
+    config = request.config or WorkflowConfigRequest()
 
     # Create ResearchGoal
     goal = ResearchGoal(

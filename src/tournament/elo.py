@@ -1,10 +1,14 @@
 """Elo rating system for hypothesis tournaments"""
 
-from typing import Tuple
+from typing import Tuple, Optional, Dict, Set
+import random
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent / "03_architecture"))
-from schemas import Hypothesis, TournamentMatch
+from schemas import Hypothesis, TournamentMatch, ProximityGraph, HypothesisCluster
+import structlog
+
+logger = structlog.get_logger()
 
 
 class EloCalculator:
@@ -161,18 +165,30 @@ class TournamentRanker:
     def select_match_pairs(
         self,
         hypotheses: list[Hypothesis],
-        top_n: int = 10
+        top_n: int = 10,
+        proximity_graph: Optional[ProximityGraph] = None,
+        use_proximity: bool = True,
+        proximity_weight: float = 0.7,
+        diversity_weight: float = 0.2
     ) -> list[Tuple[Hypothesis, Hypothesis]]:
         """Select hypothesis pairs for tournament matches
 
-        Strategy:
+        Strategy (when proximity_graph available and use_proximity=True):
+        - 70% Within-cluster pairing: Compare similar hypotheses (same cluster)
+        - 20% Cross-cluster diversity: Compare distant hypotheses (different clusters)
+        - 10% Elite top-N: Round-robin for top performers
+
+        Fallback (when proximity_graph=None or use_proximity=False):
         - Top-ranked hypotheses (top 10) are paired with each other
         - Middle-ranked hypotheses are paired with similar-rated opponents
-        - New hypotheses (default rating) are paired with established ones
 
         Args:
             hypotheses: List of all hypotheses
             top_n: Number of top hypotheses to cross-compare
+            proximity_graph: Optional proximity graph for cluster-aware pairing
+            use_proximity: Enable proximity-based pairing
+            proximity_weight: Proportion of within-cluster matches (0.0-1.0)
+            diversity_weight: Proportion of cross-cluster matches (0.0-1.0)
 
         Returns:
             List of (hypothesis_a, hypothesis_b) tuples for matches
@@ -182,6 +198,25 @@ class TournamentRanker:
         if len(ranked) < 2:
             return []
 
+        # Use proximity-aware pairing if graph available
+        if use_proximity and proximity_graph and proximity_graph.clusters:
+            return self._proximity_aware_pairing(
+                ranked,
+                proximity_graph,
+                top_n,
+                proximity_weight,
+                diversity_weight
+            )
+
+        # Fallback to Elo-based pairing
+        return self._elo_based_pairing(ranked, top_n)
+
+    def _elo_based_pairing(
+        self,
+        ranked: list[Hypothesis],
+        top_n: int
+    ) -> list[Tuple[Hypothesis, Hypothesis]]:
+        """Original Elo-based pairing logic (backward compatible)"""
         pairs = []
 
         # Top hypotheses: round-robin
@@ -195,6 +230,214 @@ class TournamentRanker:
         middle_hypotheses = ranked[top_n:]
         for i in range(0, len(middle_hypotheses) - 1, 2):
             pairs.append((middle_hypotheses[i], middle_hypotheses[i + 1]))
+
+        return pairs
+
+    def _proximity_aware_pairing(
+        self,
+        ranked: list[Hypothesis],
+        proximity_graph: ProximityGraph,
+        top_n: int,
+        proximity_weight: float,
+        diversity_weight: float
+    ) -> list[Tuple[Hypothesis, Hypothesis]]:
+        """Proximity-aware pairing using cluster information"""
+        # Build hypothesis lookup and cluster mapping
+        hyp_map = {h.id: h for h in ranked}
+        cluster_map = self._build_cluster_map(proximity_graph)
+
+        # Calculate target number of matches by type
+        total_possible = len(ranked) * (len(ranked) - 1) // 2
+        target_total = min(20, total_possible)  # Limit total matches
+
+        num_cluster = int(target_total * proximity_weight)
+        num_diversity = int(target_total * diversity_weight)
+        num_elite = target_total - num_cluster - num_diversity
+
+        pairs = []
+        used_pairs: Set[Tuple[str, str]] = set()
+
+        # 1. Within-cluster pairing (70%)
+        cluster_pairs = self._create_cluster_pairings(
+            proximity_graph.clusters,
+            hyp_map,
+            num_cluster,
+            used_pairs
+        )
+        pairs.extend(cluster_pairs)
+
+        # 2. Cross-cluster diversity pairing (20%)
+        diversity_pairs = self._create_diversity_pairings(
+            proximity_graph.clusters,
+            proximity_graph,
+            hyp_map,
+            num_diversity,
+            used_pairs
+        )
+        pairs.extend(diversity_pairs)
+
+        # 3. Elite top-N pairing (10%)
+        elite_pairs = self._create_elite_pairings(
+            ranked[:top_n],
+            num_elite,
+            used_pairs
+        )
+        pairs.extend(elite_pairs)
+
+        logger.info(
+            "tournament_pairing_strategy",
+            total_pairs=len(pairs),
+            within_cluster=len(cluster_pairs),
+            diversity=len(diversity_pairs),
+            elite=len(elite_pairs),
+            proximity_enabled=True
+        )
+
+        return pairs
+
+    def _build_cluster_map(self, proximity_graph: ProximityGraph) -> Dict[str, str]:
+        """Build hypothesis_id → cluster_id mapping for O(1) lookups"""
+        cluster_map = {}
+        for cluster in proximity_graph.clusters:
+            for hyp_id in cluster.hypothesis_ids:
+                cluster_map[hyp_id] = cluster.id
+        return cluster_map
+
+    def _create_cluster_pairings(
+        self,
+        clusters: list[HypothesisCluster],
+        hyp_map: Dict[str, Hypothesis],
+        num_pairs: int,
+        used_pairs: Set[Tuple[str, str]]
+    ) -> list[Tuple[Hypothesis, Hypothesis]]:
+        """Generate within-cluster pairings"""
+        from src.config import settings
+        pairs = []
+
+        for cluster in clusters:
+            # Skip small clusters
+            if len(cluster.hypothesis_ids) < settings.min_cluster_size_for_pairing:
+                continue
+
+            # Get hypotheses in this cluster
+            cluster_hyps = [
+                hyp_map[hid] for hid in cluster.hypothesis_ids
+                if hid in hyp_map
+            ]
+
+            if len(cluster_hyps) < 2:
+                continue
+
+            # Pair within cluster by Elo proximity
+            cluster_hyps_sorted = sorted(
+                cluster_hyps,
+                key=lambda h: h.elo_rating or 1200.0,
+                reverse=True
+            )
+
+            # Create pairs within cluster
+            for i in range(len(cluster_hyps_sorted) - 1):
+                if len(pairs) >= num_pairs:
+                    break
+
+                h1 = cluster_hyps_sorted[i]
+                h2 = cluster_hyps_sorted[i + 1]
+                pair_key = tuple(sorted([h1.id, h2.id]))
+
+                if pair_key not in used_pairs:
+                    pairs.append((h1, h2))
+                    used_pairs.add(pair_key)
+
+            if len(pairs) >= num_pairs:
+                break
+
+        return pairs
+
+    def _create_diversity_pairings(
+        self,
+        clusters: list[HypothesisCluster],
+        proximity_graph: ProximityGraph,
+        hyp_map: Dict[str, Hypothesis],
+        num_pairs: int,
+        used_pairs: Set[Tuple[str, str]]
+    ) -> list[Tuple[Hypothesis, Hypothesis]]:
+        """Generate cross-cluster diversity pairings"""
+        pairs = []
+
+        # Build set of connected cluster pairs (have edges between them)
+        connected_clusters: Set[Tuple[str, str]] = set()
+        cluster_hyp_map: Dict[str, Set[str]] = {
+            c.id: set(c.hypothesis_ids) for c in clusters
+        }
+
+        for edge in proximity_graph.edges:
+            c1_id = None
+            c2_id = None
+            for cid, hyp_ids in cluster_hyp_map.items():
+                if edge.hypothesis_a_id in hyp_ids:
+                    c1_id = cid
+                if edge.hypothesis_b_id in hyp_ids:
+                    c2_id = cid
+
+            if c1_id and c2_id and c1_id != c2_id:
+                connected_clusters.add(tuple(sorted([c1_id, c2_id])))
+
+        # Find distant cluster pairs (not connected)
+        for i, cluster_a in enumerate(clusters):
+            for cluster_b in clusters[i + 1:]:
+                if len(pairs) >= num_pairs:
+                    break
+
+                pair_key = tuple(sorted([cluster_a.id, cluster_b.id]))
+                if pair_key in connected_clusters:
+                    continue  # Skip connected clusters
+
+                # Pick random hypotheses from each cluster
+                hyps_a = [hyp_map[hid] for hid in cluster_a.hypothesis_ids if hid in hyp_map]
+                hyps_b = [hyp_map[hid] for hid in cluster_b.hypothesis_ids if hid in hyp_map]
+
+                if hyps_a and hyps_b:
+                    h1 = random.choice(hyps_a)
+                    h2 = random.choice(hyps_b)
+                    hyp_pair_key = tuple(sorted([h1.id, h2.id]))
+
+                    if hyp_pair_key not in used_pairs:
+                        pairs.append((h1, h2))
+                        used_pairs.add(hyp_pair_key)
+
+            if len(pairs) >= num_pairs:
+                break
+
+        return pairs
+
+    def _create_elite_pairings(
+        self,
+        top_hypotheses: list[Hypothesis],
+        num_pairs: int,
+        used_pairs: Set[Tuple[str, str]]
+    ) -> list[Tuple[Hypothesis, Hypothesis]]:
+        """Generate elite top-N round-robin pairings"""
+        pairs = []
+
+        if len(top_hypotheses) < 2:
+            return pairs
+
+        # Round-robin for top hypotheses
+        for i in range(len(top_hypotheses)):
+            for j in range(i + 1, min(i + 3, len(top_hypotheses))):
+                if len(pairs) >= num_pairs:
+                    break
+
+                h1 = top_hypotheses[i]
+                h2 = top_hypotheses[j]
+                pair_key = tuple(sorted([h1.id, h2.id]))
+
+                if pair_key not in used_pairs:
+                    pairs.append((h1, h2))
+                    used_pairs.add(pair_key)
+
+            if len(pairs) >= num_pairs:
+                break
 
         return pairs
 

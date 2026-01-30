@@ -35,6 +35,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent / "03_Architecture"))
 from schemas import (
     ResearchGoal,
     ResearchPlanConfiguration,
+    EvaluationCriterion,
     AgentTask,
     AgentType,
     SystemStatistics,
@@ -311,9 +312,20 @@ Respond with ONLY the JSON object."""
         try:
             data = parse_llm_json(response, agent_name="SupervisorAgent")
 
+            # Convert criterion strings to EvaluationCriterion objects
+            criteria_names = data.get("evaluation_criteria", [])
+            evaluation_criteria = [
+                EvaluationCriterion(
+                    name=name,
+                    description=f"Evaluation based on {name}",
+                    weight=1.0
+                )
+                for name in criteria_names
+            ]
+
             return ResearchPlanConfiguration(
                 research_goal_id=goal.id,
-                evaluation_criteria=data.get("evaluation_criteria", []),
+                evaluation_criteria=evaluation_criteria,
                 domain_constraints=data.get("domain_constraints", goal.constraints),
                 tools_enabled=data.get("tools_enabled", ["web_search"]),
                 require_novelty=data.get("require_novelty", True),
@@ -323,10 +335,20 @@ Respond with ONLY the JSON object."""
                 "config_parse_failed_using_defaults",
                 error=str(e)
             )
-            # Return default configuration
+            # Return default configuration with proper EvaluationCriterion objects
+            default_criteria = ["novelty", "feasibility", "testability"]
+            evaluation_criteria = [
+                EvaluationCriterion(
+                    name=name,
+                    description=f"Evaluation based on {name}",
+                    weight=1.0
+                )
+                for name in default_criteria
+            ]
+
             return ResearchPlanConfiguration(
                 research_goal_id=goal.id,
-                evaluation_criteria=["novelty", "feasibility", "testability"],
+                evaluation_criteria=evaluation_criteria,
                 domain_constraints=goal.constraints,
                 tools_enabled=["web_search", "literature_review"],
                 require_novelty=True,
@@ -381,6 +403,31 @@ Respond with ONLY the JSON object."""
         Args:
             research_goal: Current research goal.
         """
+        # Refresh proximity graph periodically for proximity-aware pairing
+        if (settings.proximity_aware_pairing and
+            self.iteration % settings.proximity_graph_refresh_frequency == 0):
+
+            hypotheses = await self.storage.get_hypotheses_by_goal(research_goal.id)
+            if len(hypotheses) >= 2:
+                # Create high-priority proximity graph refresh task
+                refresh_task = AgentTask(
+                    id=generate_task_id(),
+                    agent_type=AgentType.PROXIMITY,
+                    task_type="build_proximity_graph",
+                    priority=8,  # High priority before tournament round
+                    parameters={
+                        "goal_id": research_goal.id,
+                        "hypothesis_ids": [h.id for h in hypotheses],
+                    },
+                    status="pending"
+                )
+                self.task_queue.add_task(refresh_task)
+                logger.info(
+                    "proximity_graph_refresh_scheduled",
+                    iteration=self.iteration,
+                    hypothesis_count=len(hypotheses)
+                )
+
         # Calculate tasks per agent based on weights
         tasks_per_iteration = 5  # Base number of tasks per iteration
         executed_count = 0
@@ -483,19 +530,45 @@ Respond with ONLY the JSON object."""
                 if h.status != HypothesisStatus.GENERATED
             ]
             if len(reviewed) >= 2:
-                # Select two hypotheses for comparison
-                h1, h2 = reviewed[:2]
-                return AgentTask(
-                    id=generate_task_id(),
-                    agent_type=AgentType.RANKING,
-                    task_type="tournament_match",
-                    priority=7,
-                    parameters={
-                        "hypothesis_a_id": h1.id,
-                        "hypothesis_b_id": h2.id,
-                    },
-                    status="pending"
+                # Get proximity graph if proximity-aware pairing is enabled
+                proximity_graph = None
+                if settings.proximity_aware_pairing:
+                    try:
+                        proximity_graph = await self.storage.get_proximity_graph(goal_id)
+                    except Exception as e:
+                        logger.warning(
+                            "proximity_graph_retrieval_failed",
+                            goal_id=goal_id,
+                            error=str(e)
+                        )
+
+                # Use TournamentRanker with proximity graph
+                from src.tournament.elo import TournamentRanker
+                ranker = TournamentRanker()
+
+                pairs = ranker.select_match_pairs(
+                    hypotheses=reviewed,
+                    top_n=10,
+                    proximity_graph=proximity_graph,
+                    use_proximity=settings.proximity_aware_pairing,
+                    proximity_weight=settings.proximity_pairing_weight,
+                    diversity_weight=settings.diversity_pairing_weight
                 )
+
+                if pairs:
+                    h1, h2 = pairs[0]  # Take first pair
+                    return AgentTask(
+                        id=generate_task_id(),
+                        agent_type=AgentType.RANKING,
+                        task_type="tournament_match",
+                        priority=7,
+                        parameters={
+                            "hypothesis_a_id": h1.id,
+                            "hypothesis_b_id": h2.id,
+                            "cluster_aware": proximity_graph is not None,
+                        },
+                        status="pending"
+                    )
 
         elif agent_type == AgentType.EVOLUTION:
             # Find top hypothesis for evolution
@@ -614,8 +687,6 @@ Respond with ONLY the JSON object."""
                 review = await asyncio.to_thread(
                     agent.execute,
                     hypothesis=hypothesis,
-                    goal=research_goal.description,
-                    preferences=research_goal.preferences,
                     review_type=review_type
                 )
                 await self.storage.add_review(review)
@@ -662,12 +733,14 @@ Respond with ONLY the JSON object."""
             hypothesis = await self.storage.get_hypothesis(hypothesis_id)
             if hypothesis:
                 strategy = EvolutionStrategy(params.get("strategy", "feasibility"))
+                # Get reviews for evolution context
+                reviews = await self.storage.get_reviews_for_hypothesis(hypothesis_id)
                 # Run sync agent in thread pool to avoid blocking event loop
                 evolved = await asyncio.to_thread(
                     agent.execute,
                     hypothesis=hypothesis,
                     strategy=strategy,
-                    research_goal=research_goal
+                    reviews=reviews if reviews else None
                 )
                 await self.storage.add_hypothesis(evolved)
 

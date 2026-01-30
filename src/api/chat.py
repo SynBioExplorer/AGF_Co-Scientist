@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from datetime import datetime
 import sys
 from pathlib import Path
+import asyncio
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
@@ -11,7 +12,7 @@ sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "03_Architecture"))
 
 from src.api.models import ChatRequest, ChatResponse
-from src.storage.memory import storage
+from src.storage.async_adapter import async_storage
 from src.llm.factory import get_llm_client
 from src.config import settings
 from src.utils.ids import generate_id
@@ -61,12 +62,12 @@ async def chat(request: ChatRequest):
     )
 
     # Verify goal exists
-    goal = storage.get_research_goal(request.goal_id)
+    goal = await async_storage.get_research_goal(request.goal_id)
     if not goal:
         raise HTTPException(status_code=404, detail="Research goal not found")
 
     # Get top hypotheses for context
-    all_hypotheses = storage.get_hypotheses_by_goal(request.goal_id)
+    all_hypotheses = await async_storage.get_hypotheses_by_goal(request.goal_id)
     top_hypotheses = sorted(
         all_hypotheses,
         key=lambda h: h.elo_rating or 1200.0,
@@ -76,10 +77,10 @@ async def chat(request: ChatRequest):
     # If specific hypotheses requested, include those
     context_hypotheses = top_hypotheses
     if request.context_hypothesis_ids:
-        specific = [
-            storage.get_hypothesis(hid)
+        specific = await asyncio.gather(*[
+            async_storage.get_hypothesis(hid)
             for hid in request.context_hypothesis_ids
-        ]
+        ])
         specific = [h for h in specific if h is not None]
         # Combine specific with top, deduplicating
         seen_ids = {h.id for h in specific}
@@ -187,7 +188,7 @@ async def get_chat_history_endpoint(goal_id: str):
         List of chat messages
     """
     # Verify goal exists
-    goal = storage.get_research_goal(goal_id)
+    goal = await async_storage.get_research_goal(goal_id)
     if not goal:
         raise HTTPException(status_code=404, detail="Research goal not found")
 
@@ -220,7 +221,7 @@ async def clear_chat_history(goal_id: str):
         Confirmation message
     """
     # Verify goal exists
-    goal = storage.get_research_goal(goal_id)
+    goal = await async_storage.get_research_goal(goal_id)
     if not goal:
         raise HTTPException(status_code=404, detail="Research goal not found")
 
@@ -253,11 +254,11 @@ async def explain_hypothesis(goal_id: str, hypothesis_id: str):
         Detailed explanation
     """
     # Verify goal and hypothesis exist
-    goal = storage.get_research_goal(goal_id)
+    goal = await async_storage.get_research_goal(goal_id)
     if not goal:
         raise HTTPException(status_code=404, detail="Research goal not found")
 
-    hypothesis = storage.get_hypothesis(hypothesis_id)
+    hypothesis = await async_storage.get_hypothesis(hypothesis_id)
     if not hypothesis:
         raise HTTPException(status_code=404, detail="Hypothesis not found")
 
@@ -265,8 +266,8 @@ async def explain_hypothesis(goal_id: str, hypothesis_id: str):
         raise HTTPException(status_code=400, detail="Hypothesis does not belong to this goal")
 
     # Get reviews and tournament record
-    reviews = storage.get_reviews_for_hypothesis(hypothesis_id)
-    matches = storage.get_matches_for_hypothesis(hypothesis_id)
+    reviews = await async_storage.get_reviews_for_hypothesis(hypothesis_id)
+    matches = await async_storage.get_matches_for_hypothesis(hypothesis_id)
     wins = len([m for m in matches if m.winner_id == hypothesis_id])
     win_rate = wins / len(matches) if matches else 0.0
 

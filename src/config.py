@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     tool_timeout_seconds: int = 30
     tool_max_results: int = 10
 
+    # Tournament Pairing Configuration (Phase 5 Enhancement - Proximity-Aware Matching)
+    proximity_aware_pairing: bool = True  # Enable proximity-based tournament pairing
+    proximity_pairing_weight: float = 0.7  # Proportion of within-cluster matches (70%)
+    diversity_pairing_weight: float = 0.2  # Proportion of cross-cluster matches (20%)
+    proximity_graph_refresh_frequency: int = 3  # Refresh proximity graph every N iterations
+    min_cluster_size_for_pairing: int = 2  # Minimum hypotheses per cluster for pairing
+
     # Paths
     project_root: Path = Path(__file__).parent.parent
     prompts_dir: Path = project_root / "02_Prompts"

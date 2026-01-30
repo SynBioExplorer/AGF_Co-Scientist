@@ -104,8 +104,27 @@ class CoScientistWorkflow:
             logger.warning("Not enough hypotheses for tournament", count=len(all_hypotheses))
             return {"matches": []}
 
-        # Select pairs for comparison
-        pairs = self.ranker.select_match_pairs(all_hypotheses, top_n=5)
+        # Get proximity graph if proximity-aware pairing is enabled
+        proximity_graph = None
+        if settings.proximity_aware_pairing:
+            try:
+                proximity_graph = storage.get_proximity_graph(state["research_goal"].id)
+            except Exception as e:
+                logger.warning(
+                    "proximity_graph_retrieval_failed",
+                    goal_id=state["research_goal"].id,
+                    error=str(e)
+                )
+
+        # Select pairs for comparison with proximity awareness
+        pairs = self.ranker.select_match_pairs(
+            all_hypotheses,
+            top_n=5,
+            proximity_graph=proximity_graph,
+            use_proximity=settings.proximity_aware_pairing,
+            proximity_weight=settings.proximity_pairing_weight,
+            diversity_weight=settings.diversity_pairing_weight
+        )
 
         new_matches = []
         for hyp_a, hyp_b in pairs[:3]:  # Limit to 3 matches per iteration

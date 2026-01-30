@@ -7,6 +7,13 @@ This test suite verifies that:
 4. Agent and LLM tracing decorators work correctly
 """
 
+import sys
+from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 import os
 import pytest
 from unittest.mock import Mock, patch, MagicMock

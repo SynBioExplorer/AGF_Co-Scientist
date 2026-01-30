@@ -1,261 +1,294 @@
-# Phase 5 Execution Plan
+# Phase 5D Frontend Dashboard - Execution Plan
 
 > **Generated:** 2025-01-29
-> **Risk Score:** 296 (HIGH - Requires human review before proceeding)
+> **Risk Score:** 286 (HIGH - Requires human review)
+> **Project:** AI Co-Scientist Frontend Dashboard
 
 ## Overview
 
-This plan decomposes Phase 5 of the AI Co-Scientist project into 7 parallelizable tasks that build:
-- Vector storage with ChromaDB for fast hypothesis similarity
-- LangSmith observability for LLM tracing
-- PubMed tool integration for literature research
-- PDF literature processing with semantic search
-- Settings API for runtime configuration
-- React frontend dashboard
-- Final integration and testing
+This plan decomposes the Phase 5D Frontend Dashboard into 6 parallelizable tasks that build a complete React frontend for the AI Co-Scientist system:
+
+| Task | Description | Files |
+|------|-------------|-------|
+| task-a | Foundation & Infrastructure | 22 |
+| task-b | Settings Panel & Store | 9 |
+| task-c | Layout & Navigation | 11 |
+| task-d | Chat Interface | 8 |
+| task-e | Hypothesis Browser & Visualizations | 13 |
+| task-f | Literature Page & PDF Upload | 8 |
+
+**Total Files:** 71 frontend files
 
 ## Risk Factors
 
 | Factor | Value | Impact |
 |--------|-------|--------|
-| Sensitive paths | 2 | `.env` file, API key handling |
-| Task count | 7 | Moderate complexity |
-| File count | 73 | Large frontend component count |
-| Hot files | 9 | Multiple config patches needed |
-| Contracts | 6 | Interface dependencies |
-| Test coverage | 86% | Some files lack explicit tests |
+| Sensitive paths | 3 | `.env` files, API key handling |
+| Task count | 6 | Moderate complexity |
+| File count | 72 | Large frontend component count |
+| Test coverage | 0% | Frontend uses browser-based testing |
+
+**Note:** The high risk score is primarily due to the API key handling in settings (expected for a configuration panel) and the large number of component files. This is typical for a frontend project.
 
 ## Execution Waves
 
-The tasks are organized into 4 execution waves based on dependencies:
+The tasks are organized into 2 execution waves based on dependencies:
 
 ```
-Wave 1 (Parallel - 4 tasks)
-├── task-vector-storage    # Embeddings & ChromaDB
-├── task-observability     # LangSmith tracing
-├── task-settings-api      # Settings endpoints
-└── task-tool-integration  # PubMed tool
+Wave 1 (Sequential - 1 task)
+└── task-a (Foundation)
+    ├── Project setup (Vite, TypeScript, Tailwind)
+    ├── API service layer
+    ├── TypeScript types
+    ├── Core hooks (usePolling, useApi)
+    └── Common UI components
 
-Wave 2 (Sequential)
-└── task-literature-processing  # Depends on vector storage
-
-Wave 3 (Sequential)
-└── task-frontend              # Depends on all API tasks
-
-Wave 4 (Sequential)
-└── task-integration           # Final integration, depends on all
+Wave 2 (Parallel - 5 tasks, max 3 concurrent)
+├── task-b (Settings)       # Settings panel, Zustand store
+├── task-c (Layout)         # App shell, routing, dashboard
+├── task-d (Chat)           # Chat interface
+├── task-e (Hypotheses)     # Hypothesis browser, visualizations
+└── task-f (Literature)     # Literature page, PDF upload
 ```
 
 ## Task Details
 
-### Wave 1: Foundation Tasks (Parallel)
+### Wave 1: Foundation (Sequential)
 
-#### Task 1: Vector Storage (task-vector-storage)
-**Purpose:** Enable fast semantic similarity for hypothesis clustering
+#### Task A: Foundation & Infrastructure
+**Purpose:** Set up the React project and create shared infrastructure
 
-**New Modules:**
-- `src/embeddings/` - Embedding client abstraction with Google/OpenAI implementations
-- `src/storage/vector.py` - ChromaDB vector store
+**Files Created:**
+- Project configuration: `package.json`, `vite.config.ts`, `tsconfig.json`, `tailwind.config.js`
+- Entry point: `src/main.tsx`, `src/index.css`
+- Types: `src/types/index.ts`, `src/types/api.ts`
+- API Service: `src/services/api.ts`
+- Hooks: `src/hooks/useApi.ts`, `src/hooks/usePolling.ts`
+- Common components: `Button`, `Card`, `Loading`, `Select`, `Slider`, `Input`
 
-**Config Changes:**
-- Add `vector_store_type`, `embedding_provider` to Settings
-- Add embedding model configuration
-
-**Test File:** `05_tests/phase5_vector_test.py`
-
----
-
-#### Task 2: Observability (task-observability)
-**Purpose:** Add LangSmith tracing for debugging and cost monitoring
-
-**New Modules:**
-- `src/observability/tracing.py` - Tracing utilities, decorators
-
-**Patches:**
-- `src/llm/base.py` - Add callbacks property
-- `src/llm/google.py` - Add tracing to LLM calls
-- `src/llm/openai.py` - Add tracing to LLM calls
-
-**Test File:** `05_tests/phase5_tracing_test.py`
-
----
-
-#### Task 3: Settings API (task-settings-api)
-**Purpose:** Enable runtime configuration from frontend
-
-**New Files:**
-- `src/api/settings.py` - Settings router
-
-**Test File:** `05_tests/phase5_settings_test.py`
-
----
-
-#### Task 4: Tool Integration (task-tool-integration)
-**Purpose:** Add PubMed literature search capability
-
-**New Modules:**
-- `src/tools/base.py` - Tool interface
-- `src/tools/registry.py` - Tool registry
-- `src/tools/pubmed.py` - PubMed API client
-- `src/api/tools.py` - Tools router
-
-**Config Changes:**
-- Add `pubmed_api_key`, `tool_timeout_seconds`
-
-**Test File:** `05_tests/phase5_tools_test.py`
-
----
-
-### Wave 2: Literature Processing
-
-#### Task 5: Literature Processing (task-literature-processing)
-**Depends on:** task-vector-storage
-
-**Purpose:** Enable PDF upload, parsing, and semantic search
-
-**New Modules:**
-- `src/literature/pdf_parser.py` - PyMuPDF-based parser
-- `src/literature/chunker.py` - Text chunking
-- `src/literature/citation_extractor.py` - Citation parsing
-- `src/literature/citation_graph.py` - Citation networks
-- `src/literature/repository.py` - Private document repository
-- `src/api/documents.py` - Documents router
-
-**Test File:** `05_tests/phase5_literature_test.py`
-
----
-
-### Wave 3: Frontend
-
-#### Task 6: Frontend Dashboard (task-frontend)
-**Depends on:** task-settings-api, task-tool-integration, task-literature-processing
-
-**Purpose:** Build React UI for scientist interaction
-
-**New Module:** `frontend/`
-- Vite + React + TypeScript + Tailwind
-- 45+ component files
-- Chat, hypotheses, literature, settings pages
-- Zustand state management
-- React Query for data fetching
-
-**Verification:** `npm install && npm run build`
-
----
-
-### Wave 4: Integration
-
-#### Task 7: Integration (task-integration)
-**Depends on:** All previous tasks
-
-**Purpose:** Wire everything together, final testing
-
-**Actions:**
-- Register all new routers in `src/api/main.py`
-- Update `environment.yml` with new dependencies
-- Update Phase 5 status documentation
-
-**Test File:** `05_tests/phase5_integration_test.py`
-
-## Interface Contracts
-
-The following contracts define interfaces between tasks:
-
-| Contract | File | Consumers |
-|----------|------|-----------|
-| EmbeddingClientProtocol | `contracts/embedding_interface.py` | vector-storage, literature |
-| VectorStoreProtocol | `contracts/vector_store_interface.py` | vector-storage, literature |
-| ToolProtocol | `contracts/tool_interface.py` | tool-integration |
-| TracingProtocol | `contracts/tracing_interface.py` | observability |
-| LiteratureProtocols | `contracts/literature_interface.py` | literature |
-| APIContracts | `contracts/api_interface.py` | all API tasks |
-
-## New Dependencies
-
-Add to `03_architecture/environment.yml`:
-```yaml
-- chromadb>=0.4.0      # Vector storage
-- pymupdf>=1.23.0      # PDF parsing
-- langsmith>=0.1.0     # Observability
-- aiofiles>=23.0.0     # Async file operations
+**Verification:**
+```bash
+cd frontend && npm install && npm run build
+cd frontend && npx tsc --noEmit
 ```
+
+---
+
+### Wave 2: Feature Tasks (Parallel - max 3 workers)
+
+#### Task B: Settings Panel & Store
+**Depends on:** task-a
+
+**Purpose:** Implement settings management with Zustand
+
+**Files Created:**
+- Store: `src/store/settingsStore.ts`
+- Components: `SettingsPanel`, `ModelSelector`, `ApiKeyInput`, `ParameterSliders`, `FeatureToggles`
+- Page: `src/pages/SettingsPage.tsx`
+- Hook: `src/hooks/useSettings.ts`
+
+**Settings Schema:**
+```typescript
+interface Settings {
+  llmProvider: 'google' | 'openai';
+  model: string;
+  googleApiKey: string;
+  openaiApiKey: string;
+  tavilyApiKey: string;
+  temperature: number;        // 0.0 - 1.0
+  maxIterations: number;      // 1 - 50
+  tournamentRounds: number;   // 1 - 10
+  eloKFactor: number;         // 16 - 64
+  enableEvolution: boolean;
+  enableWebSearch: boolean;
+  enableLiteratureSearch: boolean;
+}
+```
+
+---
+
+#### Task C: Layout & Navigation + App Shell
+**Depends on:** task-a
+
+**Purpose:** Create the application shell and routing
+
+**Files Created:**
+- Layout: `Header`, `Sidebar`, `Layout`
+- App: `src/App.tsx` (React Router setup)
+- Dashboard: `src/pages/Dashboard.tsx`
+- Dashboard components: `StatCard`, `GoalSelector`, `StatusIndicator`
+- Store: `src/store/goalStore.ts`
+
+**Routes:**
+- `/` - Dashboard
+- `/chat` - Chat interface
+- `/hypotheses` - Hypothesis browser
+- `/literature` - Literature page
+- `/settings` - Settings
+
+---
+
+#### Task D: Chat Interface
+**Depends on:** task-a
+
+**Purpose:** Implement chat with AI Co-Scientist
+
+**Files Created:**
+- Components: `ChatWindow`, `MessageList`, `MessageInput`, `ChatMessage`, `ContextIndicator`
+- Page: `src/pages/ChatPage.tsx`
+- Store: `src/store/chatStore.ts`
+
+**API Integration:**
+- `POST /api/v1/chat` - Send message
+- `GET /api/v1/chat/{goal_id}/history` - Get chat history
+
+---
+
+#### Task E: Hypothesis Browser & Visualizations
+**Depends on:** task-a
+
+**Purpose:** Display hypotheses with Elo ratings and charts
+
+**Files Created:**
+- Hypothesis components: `HypothesisList`, `HypothesisCard`, `HypothesisDetail`, `FeedbackForm`, `TournamentRecord`
+- Visualization components: `EloChart`, `QualityDistribution`, `AgentActivity`
+- Page: `src/pages/HypothesesPage.tsx`
+- Store: `src/store/hypothesisStore.ts`
+
+**API Integration:**
+- `GET /goals/{goal_id}/hypotheses` - List hypotheses
+- `GET /hypotheses/{hypothesis_id}` - Hypothesis detail
+- `POST /hypotheses/{hypothesis_id}/feedback` - Submit feedback
+- `GET /goals/{goal_id}/stats` - Get statistics
+
+---
+
+#### Task F: Literature Page & PDF Upload
+**Depends on:** task-a
+
+**Purpose:** Manage private document repository
+
+**Files Created:**
+- Components: `PdfUpload`, `DocumentList`, `SearchResults`, `DocumentCard`, `SearchBar`
+- Page: `src/pages/LiteraturePage.tsx`
+- Store: `src/store/literatureStore.ts`
+
+**API Integration:**
+- `POST /api/v1/documents/upload` - Upload PDF
+- `GET /api/v1/documents/search` - Search documents
+- `GET /api/v1/documents` - List documents
+
+---
+
+## File Ownership Matrix
+
+Each task has exclusive ownership of its files to prevent merge conflicts:
+
+| Task | Owned Directories/Files |
+|------|------------------------|
+| task-a | `frontend/src/types/*`, `frontend/src/services/*`, `frontend/src/hooks/useApi.ts`, `frontend/src/hooks/usePolling.ts`, `frontend/src/components/common/*`, config files |
+| task-b | `frontend/src/store/settingsStore.ts`, `frontend/src/components/settings/*`, `frontend/src/pages/SettingsPage.tsx`, `frontend/src/hooks/useSettings.ts` |
+| task-c | `frontend/src/App.tsx`, `frontend/src/components/layout/*`, `frontend/src/components/dashboard/*`, `frontend/src/pages/Dashboard.tsx`, `frontend/src/store/goalStore.ts` |
+| task-d | `frontend/src/components/chat/*`, `frontend/src/pages/ChatPage.tsx`, `frontend/src/store/chatStore.ts` |
+| task-e | `frontend/src/components/hypotheses/*`, `frontend/src/components/visualizations/*`, `frontend/src/pages/HypothesesPage.tsx`, `frontend/src/store/hypothesisStore.ts` |
+| task-f | `frontend/src/components/literature/*`, `frontend/src/pages/LiteraturePage.tsx`, `frontend/src/store/literatureStore.ts` |
+
+## Technology Stack
+
+| Technology | Version | Purpose |
+|------------|---------|---------|
+| React | 18.x | UI framework |
+| TypeScript | 5.x | Type safety |
+| Vite | 5.x | Build tool |
+| Tailwind CSS | 3.x | Styling |
+| Zustand | 4.x | State management |
+| React Query | 5.x | Data fetching |
+| React Router | 6.x | Routing |
+| Recharts | 2.x | Visualizations |
+| Axios | 1.x | HTTP client |
 
 ## Verification Commands
 
-Each task includes verification commands:
-
+### Task A (Foundation)
 ```bash
-# Vector Storage
-python -c 'from src.embeddings.base import BaseEmbeddingClient; print("OK")'
-python -c 'from src.storage.vector import ChromaVectorStore; print("OK")'
-python 05_tests/phase5_vector_test.py
-
-# Observability
-python -c 'from src.observability.tracing import get_tracer, LANGSMITH_ENABLED; print("OK")'
-python 05_tests/phase5_tracing_test.py
-
-# Tools
-python -c 'from src.tools.pubmed import PubMedTool; print("OK")'
-python 05_tests/phase5_tools_test.py
-
-# Literature
-python -c 'from src.literature.pdf_parser import PDFParser; print("OK")'
-python 05_tests/phase5_literature_test.py
-
-# Settings
-python -c 'from src.api.settings import router; print("OK")'
-python 05_tests/phase5_settings_test.py
-
-# Frontend
 cd frontend && npm install && npm run build
-
-# Integration
-python 05_tests/phase5_integration_test.py
+cd frontend && npx tsc --noEmit
 ```
 
-## Sensitive Files
+### Tasks B-F (Features)
+```bash
+cd frontend && npx tsc --noEmit
+cd frontend && npm run build
+```
 
-The following files contain or handle sensitive data:
-- `frontend/.env` - API URL configuration
-- `frontend/src/components/settings/ApiKeyInput.tsx` - API key input (stored in localStorage)
+### Final Integration
+```bash
+# Terminal 1: Start backend
+uvicorn src.api.main:app --reload --port 8000
 
-**Security Note:** API keys are stored in browser localStorage, not sent to backend except in request headers for LLM calls.
+# Terminal 2: Start frontend
+cd frontend && npm run dev
+```
+
+## Integration with App.tsx
+
+Task C (Layout) creates the `App.tsx` file with routes for all pages. The imports are:
+
+```tsx
+import { Dashboard } from './pages/Dashboard';
+import { ChatPage } from './pages/ChatPage';
+import { HypothesesPage } from './pages/HypothesesPage';
+import { LiteraturePage } from './pages/LiteraturePage';
+import { SettingsPage } from './pages/SettingsPage';
+```
+
+Since each page is in a separate file owned by its respective task, there are no merge conflicts.
+
+## Success Criteria
+
+From the Phase 5D specification:
+
+- [ ] React app builds and runs locally
+- [ ] Settings panel with model/parameter controls
+- [ ] Chat interface sending/receiving messages
+- [ ] Hypothesis list with Elo ratings and sorting
+- [ ] Hypothesis detail view with reviews
+- [ ] Elo chart visualization working
+- [ ] Statistics dashboard displaying metrics
+- [ ] Polling updates goal status
+- [ ] Settings persist in localStorage
 
 ## How to Execute
 
-### Option 1: Parallel Worktrees (Recommended)
+### Option 1: Parallel Worktrees with Supervisor (Recommended)
 
-```bash
-# Create worktrees for Wave 1 tasks
-git worktree add ../worktree-vector phase5/vector
-git worktree add ../worktree-observability phase5/observability
-git worktree add ../worktree-settings phase5/settings
-git worktree add ../worktree-tools phase5/tools
+The Supervisor agent will:
+1. Create git worktree for task-a
+2. Execute task-a, verify, merge to main
+3. Create 5 worktrees for tasks b-f (or 3 at a time based on worker limit)
+4. Execute in parallel using tmux sessions
+5. Verify each task completes successfully
+6. Merge all tasks to main
+7. Run final integration verification
 
-# Run Wave 1 in parallel (4 terminals)
-# ... implement each task in its worktree ...
-
-# Merge Wave 1, then continue with Wave 2, etc.
-```
-
-### Option 2: Sequential Execution
+### Option 2: Manual Sequential Execution
 
 Execute tasks in order:
-1. task-vector-storage
-2. task-observability
-3. task-settings-api
-4. task-tool-integration
-5. task-literature-processing
-6. task-frontend
-7. task-integration
+1. task-a (Foundation)
+2. task-b through task-f (any order, but after task-a)
 
 ## Approval Required
 
-**Risk Score: 296 (HIGH)**
+**Risk Score: 286 (HIGH)**
+
+The risk is elevated due to:
+- API key handling in settings (expected and intentional)
+- Large number of files (typical for React projects)
+- No automated tests (frontend testing typically done with browser-based tools)
 
 Before proceeding with execution:
 1. Review the task decomposition above
-2. Confirm contract interfaces are acceptable
+2. Confirm file ownership boundaries are acceptable
 3. Approve the execution plan
 
 **Proceed with execution? [Y/n]**
