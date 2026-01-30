@@ -256,7 +256,7 @@ async def _validate_citations(...)            # Post-generation validation
 
 ---
 
-### 3. `05_tests/phase6_week2_test.py` (NEW - 550 lines)
+### 3. `05_tests/phase6_generation_literature_expansion_test.py` (NEW - 550 lines)
 
 **Test Coverage:**
 

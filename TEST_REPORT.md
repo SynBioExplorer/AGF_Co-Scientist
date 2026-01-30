@@ -328,8 +328,8 @@ Comprehensive test suite execution across all project phases (Phase 1-6) has bee
 
 ---
 
-#### Phase 6f: Week 2 Integration ⚠️ PARTIAL PASS
-**Test File:** `05_tests/phase6_week2_test.py`
+#### Phase 6f: Generation Literature Expansion Integration ⚠️ PARTIAL PASS
+**Test File:** `05_tests/phase6_generation_literature_expansion_test.py`
 
 **Status:** 3 passed, 3 errors, 1 skipped
 
@@ -353,8 +353,8 @@ Comprehensive test suite execution across all project phases (Phase 1-6) has bee
 
 ---
 
-#### Phase 6g: Week 3 Integration (ObservationReview) ✅ PASSING
-**Test File:** `05_tests/phase6_week3_test.py`
+#### Phase 6g: Observation Review Integration ✅ PASSING
+**Test File:** `05_tests/phase6_observation_review_test.py`
 
 **Status:** ALL PASSED ✅ (7/7)
 

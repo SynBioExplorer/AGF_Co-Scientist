@@ -303,7 +303,7 @@ class CitationNode(BaseModel):
 
 ### 7. Comprehensive Integration Tests
 
-**File:** [05_tests/phase6_week3_test.py](../../05_tests/phase6_week3_test.py) (550 lines)
+**File:** [05_tests/phase6_observation_review_test.py](../../05_tests/phase6_observation_review_test.py) (550 lines)
 
 **Test Coverage:**
 
@@ -570,7 +570,7 @@ Tasks for Week 4:
 | memory.py additions | ~40 | In-memory storage implementation |
 | supervisor.py additions | ~50 | SupervisorAgent integration |
 | citation_graph.py additions | ~3 | Added abstract + pmid fields |
-| phase6_week3_test.py | ~550 | Integration tests |
+| phase6_observation_review_test.py | ~550 | Integration tests |
 | **Total** | **~1,203 lines** | **Week 3 implementation** |
 
 ---

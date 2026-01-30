@@ -380,7 +380,7 @@ async def test_end_to_end_generation_with_expansion(
     End-to-end test: Generate hypothesis with literature expansion.
 
     NOTE: This test requires a real LLM API key and is skipped by default.
-    Run manually with: pytest phase6_week2_test.py::test_end_to_end_generation_with_expansion -v -s
+    Run manually with: pytest phase6_generation_literature_expansion_test.py::test_end_to_end_generation_with_expansion -v -s
     """
     agent = generation_agent_with_mocks
 

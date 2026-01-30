@@ -21,13 +21,16 @@ from src.observability.tracing import trace_agent
 from src.tools.registry import get_tool_registry, initialize_tools
 from src.literature.citation_graph import CitationGraph
 from src.literature.graph_expander import CitationGraphExpander, ExpansionStrategy
+from src.literature.source_merger import CitationSourceMerger
+from src.storage.cache import RedisCache
 import json
+import hashlib
 
 
 class GenerationAgent(BaseAgent):
     """Generate hypotheses via literature exploration or simulated debate"""
 
-    def __init__(self):
+    def __init__(self, cache: Optional[RedisCache] = None):
         llm_client = get_llm_client(
             model=settings.generation_model,
             agent_name="generation"
@@ -37,6 +40,12 @@ class GenerationAgent(BaseAgent):
         # Initialize tool registry
         self.tool_registry = initialize_tools()
 
+        # Initialize merger and cache (Phase 6 Week 4)
+        self.merger = CitationSourceMerger(
+            source_priority=settings.citation_source_priority
+        )
+        self.cache = cache  # Optional Redis cache
+
     async def _search_literature_tools(
         self,
         research_goal: ResearchGoal,
@@ -44,6 +53,7 @@ class GenerationAgent(BaseAgent):
     ) -> Tuple[List[Dict[str, Any]], CitationGraph]:
         """
         Search literature using tool registry (PubMed + Semantic Scholar).
+        Uses CitationSourceMerger to deduplicate and caching for performance.
 
         Args:
             research_goal: Research goal for context
@@ -52,8 +62,33 @@ class GenerationAgent(BaseAgent):
         Returns:
             Tuple of (search_results, citation_graph)
         """
-        results = []
-        graph = CitationGraph()
+        # Check cache first (Phase 6 Week 4)
+        cache_key = None
+        if self.cache:
+            query_hash = hashlib.sha256(research_goal.description.encode()).hexdigest()[:16]
+            cache_key = f"goal:{research_goal.id}:{query_hash}"
+            cached_graph = await self.cache.get_citation_graph(cache_key)
+
+            if cached_graph:
+                self.logger.info("Citation graph cache hit", key=cache_key)
+                # Convert graph nodes to results list
+                results = [
+                    {
+                        "title": node.title,
+                        "authors": node.authors,
+                        "year": node.year,
+                        "doi": node.doi,
+                        "pmid": node.pmid,
+                        "citation_count": node.citation_count,
+                        "abstract": node.abstract
+                    }
+                    for node in cached_graph.nodes.values()
+                ]
+                return results, cached_graph
+
+        # Cache miss - search from sources
+        pubmed_results = []
+        semantic_results = []
 
         # Try PubMed tool (biomedical)
         pubmed_tool = self.tool_registry.get("pubmed")
@@ -64,10 +99,14 @@ class GenerationAgent(BaseAgent):
                     max_results=max_results // 2
                 )
                 if pubmed_result.success:
-                    results.extend(pubmed_result.data)
+                    # Add source tag for merger
+                    for paper in pubmed_result.data:
+                        paper["source"] = "pubmed"
+                    pubmed_results = pubmed_result.data
+
                     self.logger.info(
                         "PubMed search successful",
-                        num_results=len(pubmed_result.data)
+                        num_results=len(pubmed_results)
                     )
             except Exception as e:
                 self.logger.warning("PubMed search failed", error=str(e))
@@ -81,13 +120,38 @@ class GenerationAgent(BaseAgent):
                     max_results=max_results // 2
                 )
                 if semantic_result.success:
-                    results.extend(semantic_result.data)
+                    # Add source tag for merger
+                    for paper in semantic_result.data:
+                        paper["source"] = "semantic_scholar"
+                    semantic_results = semantic_result.data
+
                     self.logger.info(
                         "Semantic Scholar search successful",
-                        num_results=len(semantic_result.data)
+                        num_results=len(semantic_results)
                     )
             except Exception as e:
                 self.logger.warning("Semantic Scholar search failed", error=str(e))
+
+        # Merge papers from multiple sources (Phase 6 Week 4)
+        all_papers = pubmed_results + semantic_results
+        if all_papers:
+            merged_papers = self.merger.merge_papers(all_papers)
+
+            # Log merge statistics
+            stats = self.merger.get_merge_statistics(all_papers, merged_papers)
+            self.logger.info(
+                "Papers merged",
+                total_before=stats["total_before"],
+                total_after=stats["total_after"],
+                duplicates_removed=stats["duplicates_removed"]
+            )
+
+            results = merged_papers
+        else:
+            results = []
+
+        # Return empty graph (will be populated during expansion)
+        graph = CitationGraph()
 
         return results, graph
 
@@ -95,15 +159,17 @@ class GenerationAgent(BaseAgent):
         self,
         search_results: List[Dict[str, Any]],
         graph: CitationGraph,
-        max_depth: int = 1
+        max_depth: int = 1,
+        research_goal: Optional[ResearchGoal] = None
     ) -> CitationGraph:
         """
-        Expand citation graph from search results.
+        Expand citation graph from search results with parallel processing and caching.
 
         Args:
             search_results: Initial papers from search
             graph: Citation graph to expand
             max_depth: Depth of citation expansion
+            research_goal: Optional research goal for cache key generation
 
         Returns:
             Expanded CitationGraph
@@ -121,18 +187,48 @@ class GenerationAgent(BaseAgent):
 
         try:
             # Expand from top results (backward strategy to find foundational work)
-            await expander.expand_from_results(
-                search_results,
-                depth=max_depth,
-                strategy=ExpansionStrategy.BACKWARD,
-                limit_per_direction=10
-            )
+            # Phase 6 Week 4: Parallel expansion if enabled
+            if settings.enable_parallel_expansion:
+                # Expand multiple papers in parallel (limited by max_parallel_expansions)
+                import asyncio
+                top_papers = search_results[:settings.max_parallel_expansions]
+
+                tasks = [
+                    expander.expand_from_paper(
+                        paper_id=paper.get("doi") or paper.get("pmid") or paper.get("paperId"),
+                        strategy=ExpansionStrategy.BACKWARD,
+                        max_depth=max_depth,
+                        limit_per_direction=10
+                    )
+                    for paper in top_papers
+                    if paper.get("doi") or paper.get("pmid") or paper.get("paperId")
+                ]
+
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+            else:
+                # Sequential expansion (original behavior)
+                await expander.expand_from_results(
+                    search_results,
+                    depth=max_depth,
+                    strategy=ExpansionStrategy.BACKWARD,
+                    limit_per_direction=10
+                )
 
             self.logger.info(
                 "Citation graph expanded",
                 total_papers=len(graph.nodes),
-                total_edges=len(graph.edges)
+                total_edges=len(graph.edges),
+                parallel=settings.enable_parallel_expansion
             )
+
+            # Cache the expanded graph (Phase 6 Week 4)
+            if self.cache and research_goal:
+                query_hash = hashlib.sha256(research_goal.description.encode()).hexdigest()[:16]
+                cache_key = f"goal:{research_goal.id}:{query_hash}"
+                await self.cache.set_citation_graph(cache_key, graph)
+                self.logger.info("Citation graph cached", key=cache_key)
+
         except Exception as e:
             self.logger.warning("Citation expansion failed", error=str(e))
 
@@ -260,11 +356,12 @@ class GenerationAgent(BaseAgent):
                 )
 
                 if search_results:
-                    # Expand citation graph (depth=1)
+                    # Expand citation graph (depth=1) with caching
                     citation_graph = await self._expand_citation_graph(
                         search_results,
                         citation_graph,
-                        max_depth=1
+                        max_depth=1,
+                        research_goal=research_goal
                     )
 
                     # Format as context
