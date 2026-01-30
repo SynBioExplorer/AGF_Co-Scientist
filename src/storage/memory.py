@@ -36,6 +36,7 @@ from schemas import (
     ContextMemory,
     ScientistFeedback,
     ChatMessage,
+    ObservationReviewScore,
 )
 
 from src.storage.base import BaseStorage
@@ -80,6 +81,9 @@ class InMemoryStorage(BaseStorage):
         # Scientist interaction
         self._feedback: Dict[str, ScientistFeedback] = {}
         self._chat_messages: Dict[str, List[ChatMessage]] = {}  # goal_id -> list
+
+        # Observation reviews (Phase 6 Week 3)
+        self._observation_reviews: Dict[str, ObservationReviewScore] = {}  # hypothesis_id -> review
 
         # Research plan configurations
         self._plan_configs: Dict[str, ResearchPlanConfiguration] = {}
@@ -565,6 +569,44 @@ class InMemoryStorage(BaseStorage):
         return sorted(checkpoints, key=lambda c: c.updated_at, reverse=True)
 
     # =========================================================================
+    # Observation Review (Phase 6 Week 3)
+    # =========================================================================
+
+    async def add_observation_review(
+        self,
+        review: ObservationReviewScore
+    ) -> ObservationReviewScore:
+        """Store an observation review score."""
+        self._observation_reviews[review.hypothesis_id] = review
+        logger.info(
+            "Observation review stored",
+            hypothesis_id=review.hypothesis_id,
+            overall_score=review.overall_score
+        )
+        return review
+
+    async def get_observation_review(
+        self,
+        hypothesis_id: str
+    ) -> Optional[ObservationReviewScore]:
+        """Get observation review for a hypothesis."""
+        return self._observation_reviews.get(hypothesis_id)
+
+    async def get_observation_reviews_by_goal(
+        self,
+        goal_id: str
+    ) -> List[ObservationReviewScore]:
+        """Get all observation reviews for a research goal."""
+        # Find all hypotheses for this goal
+        hyp_ids = {h.id for h in self._hypotheses.values() if h.research_goal_id == goal_id}
+
+        # Return reviews for those hypotheses
+        return [
+            review for review in self._observation_reviews.values()
+            if review.hypothesis_id in hyp_ids
+        ]
+
+    # =========================================================================
     # Scientist Feedback
     # =========================================================================
 
@@ -641,6 +683,7 @@ class InMemoryStorage(BaseStorage):
             self._checkpoints.clear()
             self._feedback.clear()
             self._chat_messages.clear()
+            self._observation_reviews.clear()
             self._plan_configs.clear()
             logger.info("All storage cleared")
 
@@ -658,6 +701,7 @@ class InMemoryStorage(BaseStorage):
             "tasks": len(self._tasks),
             "checkpoints": sum(len(v) for v in self._checkpoints.values()),
             "feedback": len(self._feedback),
+            "observation_reviews": len(self._observation_reviews),
         }
 
     # =========================================================================

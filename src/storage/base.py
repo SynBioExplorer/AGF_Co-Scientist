@@ -42,6 +42,8 @@ from schemas import (
     # Scientist interaction models
     ScientistFeedback,
     ChatMessage,
+    # Observation review models (Phase 6 Week 3)
+    ObservationReviewScore,
     # Enums
     HypothesisStatus,
     ReviewType,
@@ -731,6 +733,55 @@ class BaseStorage(ABC):
 
         Returns:
             List of checkpoints ordered by creation date (newest first).
+        """
+        pass
+
+    # =========================================================================
+    # Observation Review (Phase 6 Week 3)
+    # =========================================================================
+
+    @abstractmethod
+    async def add_observation_review(
+        self,
+        review: "ObservationReviewScore"
+    ) -> "ObservationReviewScore":
+        """Store an observation review score.
+
+        Args:
+            review: The observation review score to store.
+
+        Returns:
+            The stored review.
+        """
+        pass
+
+    @abstractmethod
+    async def get_observation_review(
+        self,
+        hypothesis_id: str
+    ) -> Optional["ObservationReviewScore"]:
+        """Get observation review for a hypothesis.
+
+        Args:
+            hypothesis_id: Unique identifier of the hypothesis.
+
+        Returns:
+            The observation review if found, None otherwise.
+        """
+        pass
+
+    @abstractmethod
+    async def get_observation_reviews_by_goal(
+        self,
+        goal_id: str
+    ) -> List["ObservationReviewScore"]:
+        """Get all observation reviews for a research goal.
+
+        Args:
+            goal_id: Unique identifier of the research goal.
+
+        Returns:
+            List of observation reviews.
         """
         pass
 

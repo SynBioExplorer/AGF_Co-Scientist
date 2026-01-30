@@ -18,8 +18,10 @@ class CitationNode(BaseModel):
     authors: list[str] = Field(default_factory=list, description="Author names")
     year: Optional[int] = Field(None, description="Publication year")
     doi: Optional[str] = Field(None, description="DOI")
+    pmid: Optional[str] = Field(None, description="PubMed ID")
     citation_count: int = Field(0, description="Number of times cited")
     reference_count: int = Field(0, description="Number of references")
+    abstract: Optional[str] = Field(None, description="Paper abstract (Phase 6 Week 3)")
 
 
 class CitationEdge(BaseModel):

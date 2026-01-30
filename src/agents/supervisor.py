@@ -114,12 +114,13 @@ class SupervisorAgent(BaseAgent):
             Dictionary mapping agent type to weight.
         """
         return {
-            AgentType.GENERATION: 0.40,   # 40% - create hypotheses
-            AgentType.REFLECTION: 0.20,   # 20% - review hypotheses
-            AgentType.RANKING: 0.20,      # 20% - tournament matches
-            AgentType.EVOLUTION: 0.10,    # 10% - refine top hypotheses
-            AgentType.PROXIMITY: 0.05,    # 5% - cluster similar hypotheses
-            AgentType.META_REVIEW: 0.05,  # 5% - synthesize feedback
+            AgentType.GENERATION: 0.35,          # 35% - create hypotheses
+            AgentType.REFLECTION: 0.18,          # 18% - review hypotheses
+            AgentType.RANKING: 0.18,             # 18% - tournament matches
+            AgentType.OBSERVATION_REVIEW: 0.12,  # 12% - validate against literature (Phase 6 Week 3)
+            AgentType.EVOLUTION: 0.09,           # 9% - refine top hypotheses
+            AgentType.PROXIMITY: 0.04,           # 4% - cluster similar hypotheses
+            AgentType.META_REVIEW: 0.04,         # 4% - synthesize feedback
         }
 
     def _get_agent(self, agent_type: AgentType) -> Any:
@@ -150,6 +151,9 @@ class SupervisorAgent(BaseAgent):
             elif agent_type == AgentType.META_REVIEW:
                 from src.agents.meta_review import MetaReviewAgent
                 self._agents[agent_type] = MetaReviewAgent()
+            elif agent_type == AgentType.OBSERVATION_REVIEW:
+                from src.agents.observation_review import ObservationReviewAgent
+                self._agents[agent_type] = ObservationReviewAgent()
         return self._agents.get(agent_type)
 
     @trace_agent("SupervisorAgent")
@@ -782,6 +786,46 @@ Respond with ONLY the JSON object."""
             meta_review.research_goal_id = research_goal.id
             await self.storage.save_meta_review(meta_review)
             result = {"meta_review_id": meta_review.id}
+
+        elif task.agent_type == AgentType.OBSERVATION_REVIEW:
+            # Phase 6 Week 3: Observation Review Agent
+            hypothesis_id = params["hypothesis_id"]
+            hypothesis = await self.storage.get_hypothesis(hypothesis_id)
+
+            if hypothesis:
+                # Import required modules
+                from src.literature.citation_graph import CitationGraph
+
+                # Get citation graph if available
+                # For now, create an empty graph - in production this would be passed from generation
+                citation_graph = params.get("citation_graph")
+                if not citation_graph:
+                    # Try to get observation review without citation graph
+                    # This will create an empty review with a warning
+                    citation_graph = CitationGraph()
+
+                # Execute observation review
+                observation_review = await agent.execute_with_citation_graph(
+                    hypothesis=hypothesis,
+                    citation_graph=citation_graph,
+                    research_goal=research_goal,
+                    max_observations=params.get("max_observations", 20)
+                )
+
+                # Store observation review
+                await self.storage.add_observation_review(observation_review)
+
+                result = {
+                    "observation_review_id": observation_review.id,
+                    "overall_score": observation_review.overall_score,
+                    "explained_count": observation_review.observations_explained_count
+                }
+
+                logger.info(
+                    "Observation review completed",
+                    hypothesis_id=hypothesis_id,
+                    overall_score=observation_review.overall_score
+                )
 
         return result
 

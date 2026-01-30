@@ -66,6 +66,7 @@ class AgentType(str, Enum):
     PROXIMITY = "proximity"
     EVOLUTION = "evolution"
     META_REVIEW = "meta_review"
+    OBSERVATION_REVIEW = "observation_review"  # Phase 6 Week 3
 
 
 class GenerationMethod(str, Enum):
@@ -728,6 +729,124 @@ class ContextMemory(BaseModel):
 
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
+
+
+# =============================================================================
+# Observation Review (Phase 6 Week 3)
+# =============================================================================
+
+
+class ObservationType(str, Enum):
+    """Types of scientific observations that can be extracted from papers."""
+
+    EXPERIMENTAL = "experimental"
+    CLINICAL = "clinical"
+    DATASET = "dataset"
+    RESULT = "result"
+    MECHANISM = "mechanism"
+    PHENOMENON = "phenomenon"
+
+
+class Observation(BaseModel):
+    """
+    A specific observation extracted from a scientific paper.
+
+    Observations are concrete findings, results, or phenomena reported in the
+    literature that can be used to validate hypotheses.
+    """
+
+    id: str = Field(..., description="Unique identifier")
+    paper_id: str = Field(..., description="DOI, PMID, or paper identifier")
+    paper_title: str = Field(..., description="Title of the source paper")
+    observation_type: ObservationType = Field(
+        ..., description="Type of observation"
+    )
+    text: str = Field(..., description="The observation text")
+    context: str = Field(
+        ..., description="Surrounding context from the paper (2-3 sentences)"
+    )
+    relevance_score: float = Field(
+        0.0, ge=0.0, le=1.0, description="Relevance to research goal"
+    )
+    citation_count: int = Field(
+        0, description="Citation count of source paper (proxy for impact)"
+    )
+
+    extracted_at: datetime = Field(default_factory=datetime.now)
+
+
+class ObservationExplanation(BaseModel):
+    """
+    Evaluation of how well a hypothesis explains a specific observation.
+    """
+
+    observation_id: str = Field(..., description="ID of the observation")
+    hypothesis_id: str = Field(..., description="ID of the hypothesis")
+
+    explains: bool = Field(
+        ..., description="Whether hypothesis explains this observation"
+    )
+    explanation_score: float = Field(
+        ..., ge=0.0, le=1.0, description="How well it explains (0=not at all, 1=perfectly)"
+    )
+    reasoning: str = Field(
+        ..., description="LLM reasoning for the explanation score"
+    )
+
+    # Mechanistic alignment
+    mechanism_match: bool = Field(
+        False, description="Does hypothesis mechanism align with observation?"
+    )
+    prediction_match: bool = Field(
+        False, description="Does hypothesis predict this observation?"
+    )
+
+
+class ObservationReviewScore(BaseModel):
+    """
+    Aggregate score for how well a hypothesis explains a set of observations.
+
+    This implements the "Observation Review" component from the Google paper,
+    which validates hypotheses against long-tail observations from literature.
+    """
+
+    id: str = Field(..., description="Unique identifier")
+    hypothesis_id: str = Field(..., description="ID of the hypothesis reviewed")
+    research_goal_id: str = Field(..., description="Associated research goal")
+
+    # Observations evaluated
+    observations: list[Observation] = Field(
+        default_factory=list, description="Observations used for review"
+    )
+    explanations: list[ObservationExplanation] = Field(
+        default_factory=list, description="Per-observation explanations"
+    )
+
+    # Aggregate scores
+    overall_score: float = Field(
+        ..., ge=0.0, le=1.0, description="Overall explanation score (mean of explanations)"
+    )
+    observations_explained_count: int = Field(
+        0, description="Number of observations explained (score >= 0.5)"
+    )
+    observations_total_count: int = Field(
+        0, description="Total observations evaluated"
+    )
+
+    # Analysis
+    strengths: list[str] = Field(
+        default_factory=list,
+        description="Observations hypothesis explains particularly well",
+    )
+    weaknesses: list[str] = Field(
+        default_factory=list,
+        description="Observations hypothesis fails to explain",
+    )
+    summary: str = Field(
+        ..., description="Summary of observation review findings"
+    )
+
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 # =============================================================================
