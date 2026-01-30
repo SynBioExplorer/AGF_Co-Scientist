@@ -61,6 +61,7 @@ from src.config import settings
 from src.utils.ids import generate_id, generate_task_id
 from src.utils.json_parser import parse_llm_json
 from src.utils.strategy_selector import select_evolution_strategy
+from src.utils.errors import LLMClientError, CheckpointError
 from src.observability.tracing import trace_agent
 
 import structlog
@@ -169,6 +170,7 @@ class SupervisorAgent(BaseAgent):
         min_hypotheses: int = 6,
         quality_threshold: float = 0.7,
         convergence_threshold: float = 0.9,
+        max_execution_time_seconds: int | None = None,
     ) -> str:
         """Run supervisor orchestration loop.
 
@@ -182,6 +184,8 @@ class SupervisorAgent(BaseAgent):
             min_hypotheses: Minimum hypotheses before allowing convergence stop.
             quality_threshold: Average quality score threshold.
             convergence_threshold: Elo convergence threshold.
+            max_execution_time_seconds: Maximum total execution time in seconds.
+                Defaults to settings.supervisor_max_execution_seconds (7200 = 2 hours).
 
         Returns:
             Status message with summary of execution.
@@ -210,6 +214,17 @@ class SupervisorAgent(BaseAgent):
         self.iteration = 0
         terminal_reason = None
 
+        # Track workflow start time for absolute time limit (AGENT-C1 fix)
+        started_at = datetime.now()
+        if max_execution_time_seconds is None:
+            max_execution_time_seconds = settings.supervisor_max_execution_seconds
+
+        logger.info(
+            "supervisor_time_limit_set",
+            max_execution_time_seconds=max_execution_time_seconds,
+            max_execution_hours=round(max_execution_time_seconds / 3600, 2)
+        )
+
         while self.iteration < max_iterations:
             self.iteration += 1
             logger.info(
@@ -229,12 +244,14 @@ class SupervisorAgent(BaseAgent):
             # Compute statistics
             stats = await self.statistics.compute_statistics(research_goal.id)
 
-            # Check terminal conditions
+            # Check terminal conditions (including time limit)
             should_stop, reason = await self._check_terminal_conditions(
                 stats=stats,
                 min_hypotheses=min_hypotheses,
                 quality_threshold=quality_threshold,
-                convergence_threshold=convergence_threshold
+                convergence_threshold=convergence_threshold,
+                started_at=started_at,
+                max_execution_time_seconds=max_execution_time_seconds
             )
             if should_stop:
                 terminal_reason = reason
@@ -672,7 +689,7 @@ Respond with ONLY the JSON object."""
                 use_web_search=use_web_search
             )
 
-            # Safety review before storing hypothesis
+            # Safety review before storing hypothesis (mandatory)
             try:
                 safety_assessment = await self.safety_agent.review_hypothesis(hypothesis)
 
@@ -688,45 +705,48 @@ Respond with ONLY the JSON object."""
                     # Mark hypothesis as requiring safety review
                     hypothesis.status = HypothesisStatus.REQUIRES_SAFETY_REVIEW
 
-                # Store safety assessment in hypothesis metadata
-                # Note: This would ideally be stored in a dedicated field
-                if not hasattr(hypothesis, 'metadata') or hypothesis.metadata is None:
-                    hypothesis.metadata = {}
-                hypothesis.metadata['safety_assessment'] = safety_assessment
+                    # Add hypothesis to storage but return error result
+                    # Note: Safety assessment is logged but not stored in hypothesis
+                    # (Hypothesis schema doesn't have metadata field yet)
+                    await self.storage.add_hypothesis(hypothesis)
 
-            except Exception as e:
+                    return {
+                        "error": "safety_failed",
+                        "hypothesis_id": hypothesis.id,
+                        "safety_score": safety_assessment.get("safety_score"),
+                        "status": "requires_safety_review"
+                    }
+
+            except BudgetExceededError:
+                # Budget errors always propagate
+                raise
+            except (LLMClientError, Exception) as e:
+                # Other errors propagate (fail task)
                 logger.error(
-                    "safety_review_failed",
+                    "safety_review_error",
                     hypothesis_id=hypothesis.id,
-                    error=str(e)
+                    error=str(e),
+                    error_type=type(e).__name__
                 )
-                # Continue without safety review if it fails
-                # (graceful degradation - don't block hypothesis generation)
+                raise
 
+            # Only add hypothesis if it passed safety review
+            hypothesis.status = HypothesisStatus.INITIAL_REVIEW
             await self.storage.add_hypothesis(hypothesis)
             result = {"hypothesis_id": hypothesis.id}
 
-            # Only create follow-up reflection task if hypothesis passed safety review
-            # or if safety review wasn't performed (graceful degradation)
-            if hypothesis.status != HypothesisStatus.REQUIRES_SAFETY_REVIEW:
-                # Create follow-up reflection task
-                self.task_queue.add_task(AgentTask(
-                    id=generate_task_id(),
-                    agent_type=AgentType.REFLECTION,
-                    task_type="review_hypothesis",
-                    priority=9,
-                    parameters={
-                        "hypothesis_id": hypothesis.id,
-                        "review_type": ReviewType.INITIAL.value,
-                    },
-                    status="pending"
-                ))
-            else:
-                logger.info(
-                    "hypothesis_requires_human_review",
-                    hypothesis_id=hypothesis.id,
-                    message="Hypothesis flagged for safety review - skipping automated reflection"
-                )
+            # Create follow-up reflection task (hypothesis passed safety)
+            self.task_queue.add_task(AgentTask(
+                id=generate_task_id(),
+                agent_type=AgentType.REFLECTION,
+                task_type="review_hypothesis",
+                priority=9,
+                parameters={
+                    "hypothesis_id": hypothesis.id,
+                    "review_type": ReviewType.INITIAL.value,
+                },
+                status="pending"
+            ))
 
         elif task.agent_type == AgentType.REFLECTION:
             hypothesis_id = params["hypothesis_id"]
@@ -793,7 +813,7 @@ Respond with ONLY the JSON object."""
                     reviews=reviews if reviews else None
                 )
 
-                # Safety review for evolved hypothesis
+                # Safety review for evolved hypothesis (mandatory)
                 try:
                     safety_assessment = await self.safety_agent.review_hypothesis(evolved)
 
@@ -807,17 +827,38 @@ Respond with ONLY the JSON object."""
                         )
                         evolved.status = HypothesisStatus.REQUIRES_SAFETY_REVIEW
 
-                    if not hasattr(evolved, 'metadata') or evolved.metadata is None:
-                        evolved.metadata = {}
-                    evolved.metadata['safety_assessment'] = safety_assessment
+                        # Add evolved hypothesis to storage but return error result
+                        # Note: Safety assessment is logged but not stored in hypothesis
+                        # (Hypothesis schema doesn't have metadata field yet)
+                        await self.storage.add_hypothesis(evolved)
 
-                except Exception as e:
+                        # Mark original as evolved
+                        hypothesis.status = HypothesisStatus.EVOLVED
+                        await self.storage.update_hypothesis(hypothesis)
+
+                        return {
+                            "error": "safety_failed",
+                            "evolved_hypothesis_id": evolved.id,
+                            "parent_id": hypothesis_id,
+                            "safety_score": safety_assessment.get("safety_score"),
+                            "status": "requires_safety_review"
+                        }
+
+                except BudgetExceededError:
+                    # Budget errors always propagate
+                    raise
+                except (LLMClientError, Exception) as e:
+                    # Other errors propagate (fail task)
                     logger.error(
-                        "safety_review_failed_for_evolved",
+                        "safety_review_error_for_evolved",
                         evolved_id=evolved.id,
-                        error=str(e)
+                        parent_id=hypothesis_id,
+                        error=str(e),
+                        error_type=type(e).__name__
                     )
+                    raise
 
+                # Only add evolved hypothesis if it passed safety review
                 await self.storage.add_hypothesis(evolved)
 
                 # Mark original as evolved
@@ -906,7 +947,9 @@ Respond with ONLY the JSON object."""
         stats: SystemStatistics,
         min_hypotheses: int,
         quality_threshold: float,
-        convergence_threshold: float
+        convergence_threshold: float,
+        started_at: datetime,
+        max_execution_time_seconds: int
     ) -> tuple[bool, Optional[str]]:
         """Check if terminal conditions are met.
 
@@ -915,10 +958,19 @@ Respond with ONLY the JSON object."""
             min_hypotheses: Minimum hypotheses required.
             quality_threshold: Quality threshold for stopping.
             convergence_threshold: Convergence threshold for stopping.
+            started_at: Workflow start timestamp.
+            max_execution_time_seconds: Maximum execution time.
 
         Returns:
             Tuple of (should_stop, reason).
         """
+        # Check time limit (AGENT-C1 fix: prevent infinite loops)
+        elapsed_seconds = (datetime.now() - started_at).total_seconds()
+        if elapsed_seconds > max_execution_time_seconds:
+            elapsed_hours = round(elapsed_seconds / 3600, 2)
+            max_hours = round(max_execution_time_seconds / 3600, 2)
+            return True, f"Maximum execution time exceeded ({elapsed_hours}h / {max_hours}h)"
+
         # Check budget
         try:
             self.cost_tracker.check_budget()
@@ -948,11 +1000,19 @@ Respond with ONLY the JSON object."""
         goal_id: str,
         stats: SystemStatistics
     ) -> None:
-        """Save a workflow checkpoint.
+        """Save a workflow checkpoint with retry logic.
+
+        Checkpoint saves are critical for workflow resumption. If a checkpoint
+        save fails, the iteration cannot proceed safely, as system crashes would
+        result in lost work without recovery points.
 
         Args:
             goal_id: Research goal ID.
             stats: Current statistics.
+
+        Raises:
+            CheckpointError: If checkpoint save fails after retry.
+            BudgetExceededError: Always propagated (terminal condition).
         """
         # Get current state
         hypotheses = await self.storage.get_hypotheses_by_goal(goal_id)
@@ -972,12 +1032,56 @@ Respond with ONLY the JSON object."""
             iteration_count=self.iteration,
         )
 
-        await self.storage.save_checkpoint(checkpoint)
-        logger.info(
-            "checkpoint_saved",
-            goal_id=goal_id,
-            iteration=self.iteration
-        )
+        # First attempt to save checkpoint
+        try:
+            await self.storage.save_checkpoint(checkpoint)
+            logger.info(
+                "checkpoint_saved_successfully",
+                goal_id=goal_id,
+                iteration=self.iteration,
+                num_hypotheses=len(hypotheses)
+            )
+            return
+        except BudgetExceededError:
+            # Budget errors are terminal conditions - always propagate
+            raise
+        except Exception as e:
+            logger.error(
+                "checkpoint_save_failed_attempting_retry",
+                goal_id=goal_id,
+                iteration=self.iteration,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+
+            # Retry checkpoint save once
+            try:
+                logger.info(
+                    "retrying_checkpoint_save",
+                    goal_id=goal_id,
+                    iteration=self.iteration
+                )
+                await self.storage.save_checkpoint(checkpoint)
+                logger.info(
+                    "checkpoint_save_succeeded_on_retry",
+                    goal_id=goal_id,
+                    iteration=self.iteration
+                )
+                return
+            except Exception as retry_error:
+                logger.error(
+                    "checkpoint_retry_failed_workflow_cannot_continue_safely",
+                    goal_id=goal_id,
+                    iteration=self.iteration,
+                    original_error=str(e),
+                    retry_error=str(retry_error),
+                    error_type=type(retry_error).__name__
+                )
+                raise CheckpointError(
+                    f"Failed to save checkpoint after retry for goal {goal_id} "
+                    f"at iteration {self.iteration}. Original error: {e}. "
+                    f"Retry error: {retry_error}"
+                ) from retry_error
 
     async def _generate_final_overview(
         self,

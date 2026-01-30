@@ -19,9 +19,19 @@ api.interceptors.request.use((config) => {
     config.headers['X-OpenAI-API-Key'] = settings.openaiApiKey;
   }
 
+  // Add Anthropic API key if available
+  if (settings.anthropicApiKey) {
+    config.headers['X-Anthropic-API-Key'] = settings.anthropicApiKey;
+  }
+
   // Add Tavily API key if available
   if (settings.tavilyApiKey) {
     config.headers['X-Tavily-API-Key'] = settings.tavilyApiKey;
+  }
+
+  // Add PubMed API key if available
+  if (settings.pubmedApiKey) {
+    config.headers['X-PubMed-API-Key'] = settings.pubmedApiKey;
   }
 
   // Add LangSmith API key if available

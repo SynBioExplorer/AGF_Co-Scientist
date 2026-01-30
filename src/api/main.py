@@ -99,10 +99,14 @@ async def lifespan(app: FastAPI):
     )
     _cleanup_tasks.append(task_cleanup)
 
+    # Start health check task to detect deadlocks
+    health_check = asyncio.create_task(task_manager.start_health_check())
+    _cleanup_tasks.append(health_check)
+
     chat_cleanup = asyncio.create_task(_periodic_chat_cleanup())
     _cleanup_tasks.append(chat_cleanup)
 
-    logger.info("Periodic cleanup tasks started")
+    logger.info("Periodic cleanup and health check tasks started")
 
     yield
 
@@ -164,7 +168,9 @@ async def inject_api_keys_middleware(request: Request, call_next):
     header_env_map = {
         "x-google-api-key": "GOOGLE_API_KEY",
         "x-openai-api-key": "OPENAI_API_KEY",
+        "x-anthropic-api-key": "ANTHROPIC_API_KEY",
         "x-tavily-api-key": "TAVILY_API_KEY",
+        "x-pubmed-api-key": "PUBMED_API_KEY",
         "x-langsmith-api-key": "LANGCHAIN_API_KEY",
     }
 
@@ -231,7 +237,20 @@ async def run_supervisor_workflow(
     """
     # Calculate total timeout based on iterations
     # Each iteration gets supervisor_iteration_timeout seconds
+    # BUT enforce absolute maximum to prevent excessive runtime
     total_timeout = settings.supervisor_iteration_timeout * max_iterations
+
+    # Enforce absolute maximum timeout (default: 2 hours)
+    # This prevents workflows with very high max_iterations from running for days
+    absolute_max_timeout = settings.supervisor_max_execution_seconds
+    if total_timeout > absolute_max_timeout:
+        logger.warning(
+            "Calculated timeout exceeds absolute maximum, capping timeout",
+            calculated_timeout=total_timeout,
+            absolute_max=absolute_max_timeout,
+            max_iterations=max_iterations
+        )
+        total_timeout = absolute_max_timeout
 
     logger.info(
         "Starting SupervisorAgent execution",
@@ -388,13 +407,16 @@ async def submit_goal(request: SubmitGoalWithConfigRequest):
     await storage.add_research_goal(goal)
 
     # Start supervisor workflow in background (async)
+    # Calculate timeout based on iterations (same as run_supervisor_workflow)
+    total_timeout = settings.supervisor_iteration_timeout * config.max_iterations
     task_id = await task_manager.start_async_task(
         goal_id=goal.id,
         coroutine=run_supervisor_workflow(
             goal=goal,
             max_iterations=config.max_iterations,
             enable_evolution=config.enable_evolution
-        )
+        ),
+        timeout_seconds=total_timeout
     )
 
     logger.info(

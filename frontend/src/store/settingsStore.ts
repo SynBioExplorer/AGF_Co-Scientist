@@ -13,7 +13,9 @@ interface SettingsState {
   // API Keys
   googleApiKey: string;
   openaiApiKey: string;
+  anthropicApiKey: string;
   tavilyApiKey: string;
+  pubmedApiKey: string;
   langsmithApiKey: string;
 
   // Parameters
@@ -33,7 +35,9 @@ interface SettingsState {
   setAgentModel: (agentType: AgentType, config: AgentModelConfig) => void;
   setGoogleApiKey: (key: string) => void;
   setOpenaiApiKey: (key: string) => void;
+  setAnthropicApiKey: (key: string) => void;
   setTavilyApiKey: (key: string) => void;
+  setPubmedApiKey: (key: string) => void;
   setLangsmithApiKey: (key: string) => void;
   setMaxIterations: (max: number) => void;
   setTournamentRounds: (rounds: number) => void;
@@ -54,7 +58,9 @@ export const useSettingsStore = create<SettingsState>()(
       agentModels: DEFAULT_AGENT_MODELS.google,
       googleApiKey: '',
       openaiApiKey: '',
+      anthropicApiKey: '',
       tavilyApiKey: '',
+      pubmedApiKey: '',
       langsmithApiKey: '',
       maxIterations: 20,
       tournamentRounds: 5,
@@ -83,7 +89,9 @@ export const useSettingsStore = create<SettingsState>()(
         })),
       setGoogleApiKey: (key) => set({ googleApiKey: key }),
       setOpenaiApiKey: (key) => set({ openaiApiKey: key }),
+      setAnthropicApiKey: (key) => set({ anthropicApiKey: key }),
       setTavilyApiKey: (key) => set({ tavilyApiKey: key }),
+      setPubmedApiKey: (key) => set({ pubmedApiKey: key }),
       setLangsmithApiKey: (key) => set({ langsmithApiKey: key }),
       setMaxIterations: (max) => set({ maxIterations: max }),
       setTournamentRounds: (rounds) => set({ tournamentRounds: rounds }),

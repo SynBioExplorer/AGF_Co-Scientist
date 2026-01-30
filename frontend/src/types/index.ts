@@ -86,7 +86,10 @@ export interface Settings {
   // API keys (stored in localStorage)
   googleApiKey: string;
   openaiApiKey: string;
+  anthropicApiKey: string;
   tavilyApiKey: string;
+  pubmedApiKey: string;
+  langsmithApiKey: string;
 
   // Parameters
   maxIterations: number;

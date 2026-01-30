@@ -56,3 +56,8 @@ class AgentExecutionError(CoScientistError):
 class ValidationError(CoScientistError):
     """Raised when data validation fails"""
     pass
+
+
+class CheckpointError(CoScientistError):
+    """Raised when checkpoint save/load fails"""
+    pass

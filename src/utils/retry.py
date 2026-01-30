@@ -128,7 +128,7 @@ def classify_error(error: Exception) -> Exception:
 async def retry_async(
     func: Callable[..., Any],
     *args,
-    max_retries: Optional[int] = None,
+    max_retries: int = -1,
     base_delay: Optional[float] = None,
     max_delay: Optional[float] = None,
     timeout: Optional[float] = None,
@@ -144,7 +144,8 @@ async def retry_async(
     Args:
         func: Async function to call.
         *args: Positional arguments for the function.
-        max_retries: Maximum retry attempts. Defaults to settings.llm_max_retries.
+        max_retries: Maximum retry attempts (must be >= 0). Defaults to settings.llm_max_retries.
+            IMPORTANT: None is not allowed to prevent infinite retry loops.
         base_delay: Initial delay between retries in seconds.
             Defaults to settings.llm_retry_base_delay.
         max_delay: Maximum delay between retries in seconds.
@@ -158,6 +159,7 @@ async def retry_async(
         Function result.
 
     Raises:
+        ValueError: If max_retries < 0.
         LLMTimeoutError: If all attempts timeout.
         LLMRateLimitError: If rate limited after all retries.
         LLMClientError: If a non-retryable error occurs.
@@ -165,7 +167,23 @@ async def retry_async(
     # Import settings here to avoid circular imports
     from src.config import settings
 
-    max_retries = max_retries if max_retries is not None else settings.llm_max_retries
+    # Use settings default if sentinel value provided
+    if max_retries == -1:
+        max_retries = settings.llm_max_retries
+
+    # Validate max_retries
+    if max_retries < 0:
+        raise ValueError(f"max_retries must be non-negative, got {max_retries}")
+
+    # Warn if suspiciously high
+    if max_retries > 10:
+        logger.warning(
+            "high_max_retries",
+            max_retries=max_retries,
+            operation=operation_name,
+            message="max_retries > 10 may indicate a configuration issue"
+        )
+
     base_delay = base_delay if base_delay is not None else settings.llm_retry_base_delay
     max_delay = max_delay if max_delay is not None else settings.llm_retry_max_delay
     timeout = timeout if timeout is not None else settings.llm_timeout_seconds
@@ -257,7 +275,7 @@ async def retry_async(
 def sync_retry(
     func: Callable[..., Any],
     *args,
-    max_retries: Optional[int] = None,
+    max_retries: int = -1,
     base_delay: Optional[float] = None,
     max_delay: Optional[float] = None,
     operation_name: str = "LLM call",
@@ -272,9 +290,12 @@ def sync_retry(
     Args:
         func: Sync function to call.
         *args: Positional arguments for the function.
-        max_retries: Maximum retry attempts. Defaults to settings.llm_max_retries.
+        max_retries: Maximum retry attempts (must be >= 0). Defaults to settings.llm_max_retries.
+            IMPORTANT: None is not allowed to prevent infinite retry loops.
         base_delay: Initial delay between retries in seconds.
+            Defaults to settings.llm_retry_base_delay.
         max_delay: Maximum delay between retries in seconds.
+            Defaults to settings.llm_retry_max_delay.
         operation_name: Name for logging purposes.
         **kwargs: Keyword arguments for the function.
 
@@ -282,6 +303,7 @@ def sync_retry(
         Function result.
 
     Raises:
+        ValueError: If max_retries < 0.
         LLMTimeoutError: If timeout errors occur.
         LLMRateLimitError: If rate limited after all retries.
         LLMClientError: If a non-retryable error occurs.
@@ -289,7 +311,23 @@ def sync_retry(
     # Import settings here to avoid circular imports
     from src.config import settings
 
-    max_retries = max_retries if max_retries is not None else settings.llm_max_retries
+    # Use settings default if sentinel value provided
+    if max_retries == -1:
+        max_retries = settings.llm_max_retries
+
+    # Validate max_retries
+    if max_retries < 0:
+        raise ValueError(f"max_retries must be non-negative, got {max_retries}")
+
+    # Warn if suspiciously high
+    if max_retries > 10:
+        logger.warning(
+            "high_max_retries",
+            max_retries=max_retries,
+            operation=operation_name,
+            message="max_retries > 10 may indicate a configuration issue"
+        )
+
     base_delay = base_delay if base_delay is not None else settings.llm_retry_base_delay
     max_delay = max_delay if max_delay is not None else settings.llm_retry_max_delay
 

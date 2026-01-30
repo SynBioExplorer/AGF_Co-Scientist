@@ -7,11 +7,14 @@ Raises BudgetExceededError when the budget is exhausted.
 
 import json
 import os
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field, asdict
 from threading import Lock
+
+logger = logging.getLogger(__name__)
 
 # Pricing as of Jan 2026 (USD per 1M tokens)
 # Update these when pricing changes
@@ -164,11 +167,21 @@ class CostTracker:
     def check_budget(self) -> bool:
         """
         Check if budget is exceeded. Raises BudgetExceededError if so.
-        Call this BEFORE making an LLM call.
 
-        Note: For thread-safe budget enforcement, prefer check_and_add_usage()
-        which atomically checks and adds in a single operation.
+        DEPRECATED for LLM usage tracking: This method has a race condition when
+        used with add_usage(). Two threads can both pass check_budget() before
+        either calls add_usage(), allowing both to proceed and exceed the budget.
+
+        For LLM usage tracking, use check_and_add_usage() instead.
+
+        Still safe for: Standalone budget checks in flow control (e.g., checking
+        if workflow should continue) where no add_usage() call follows.
         """
+        logger.warning(
+            "check_budget() is deprecated for LLM usage tracking. "
+            "Use check_and_add_usage() for atomic budget checking and tracking. "
+            "Standalone checks for flow control are still acceptable."
+        )
         with self._lock:
             if self.total_cost_aud >= self.budget_aud:
                 raise BudgetExceededError(self.total_cost_aud, self.budget_aud)
@@ -239,9 +252,11 @@ class CostTracker:
         """
         Add token usage for an agent. Returns the cost of this call in AUD.
 
-        Note: This method assumes check_budget() was called separately.
-        For thread-safe operation, prefer check_and_add_usage() which
-        atomically checks and adds in a single operation.
+        DEPRECATED: This method has a race condition when used with check_budget().
+        Two threads can both pass check_budget() before either calls add_usage(),
+        allowing both to proceed and exceed the budget.
+
+        Use check_and_add_usage() instead for atomic budget enforcement.
 
         Args:
             agent: Agent name (e.g., "generation", "reflection")
@@ -252,6 +267,10 @@ class CostTracker:
         Returns:
             Cost of this call in AUD
         """
+        logger.warning(
+            "add_usage() is deprecated due to race condition risk. "
+            "Use check_and_add_usage() for atomic budget checking and tracking."
+        )
         with self._lock:
             # Calculate cost for this call
             pricing = MODEL_PRICING.get(model, {"input": 1.0, "output": 4.0})

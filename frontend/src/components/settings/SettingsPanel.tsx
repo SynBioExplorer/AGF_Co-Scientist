@@ -85,9 +85,19 @@ export const SettingsPanel: React.FC = () => {
             onChange={settings.setOpenaiApiKey}
           />
           <ApiKeyInput
+            label="Anthropic API Key"
+            value={settings.anthropicApiKey}
+            onChange={settings.setAnthropicApiKey}
+          />
+          <ApiKeyInput
             label="Tavily API Key"
             value={settings.tavilyApiKey}
             onChange={settings.setTavilyApiKey}
+          />
+          <ApiKeyInput
+            label="PubMed API Key"
+            value={settings.pubmedApiKey}
+            onChange={settings.setPubmedApiKey}
           />
           <ApiKeyInput
             label="LangSmith API Key"

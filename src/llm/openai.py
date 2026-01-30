@@ -118,9 +118,6 @@ class OpenAIClient(BaseLLMClient):
             BudgetExceededError: If budget limit would be exceeded.
             LLMClientError: If invocation fails after all retries.
         """
-        # Check budget before attempting (fail fast)
-        self.cost_tracker.check_budget()
-
         try:
             # Use sync retry wrapper
             content = sync_retry(
@@ -129,11 +126,11 @@ class OpenAIClient(BaseLLMClient):
                 operation_name=f"OpenAI invoke ({self.agent_name})"
             )
 
-            # Track usage after successful call
+            # Atomically check budget and track usage after successful call
             input_tokens = self._estimate_tokens(prompt)
             output_tokens = self._estimate_tokens(content)
 
-            self.cost_tracker.add_usage(
+            self.cost_tracker.check_and_add_usage(
                 agent=self.agent_name,
                 model=self.model,
                 input_tokens=input_tokens,
@@ -189,9 +186,6 @@ class OpenAIClient(BaseLLMClient):
             LLMRateLimitError: If rate limited after all retries.
             LLMClientError: If invocation fails for other reasons.
         """
-        # Check budget before attempting (fail fast)
-        self.cost_tracker.check_budget()
-
         try:
             # Use async retry wrapper with timeout
             content = await retry_async(
@@ -201,11 +195,11 @@ class OpenAIClient(BaseLLMClient):
                 operation_name=f"OpenAI ainvoke ({self.agent_name})"
             )
 
-            # Track usage after successful call
+            # Atomically check budget and track usage after successful call
             input_tokens = self._estimate_tokens(prompt)
             output_tokens = self._estimate_tokens(content)
 
-            self.cost_tracker.add_usage(
+            self.cost_tracker.check_and_add_usage(
                 agent=self.agent_name,
                 model=self.model,
                 input_tokens=input_tokens,
