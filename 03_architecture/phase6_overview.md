@@ -118,7 +118,7 @@ Implement **"Observation Review"** from the Google Co-Scientist paper - validate
 
 **Lines of Code:** ~2,015 lines
 
-**Documentation:** [PHASE6_SEMANTIC_SCHOLAR_CITATION_GRAPH_COMPLETION.md](Phase6/PHASE6_SEMANTIC_SCHOLAR_CITATION_GRAPH_COMPLETION.md)
+**Documentation:** [phase6_semantic_scholar_citation_graph.md](phase6_semantic_scholar_citation_graph.md)
 
 ---
 
@@ -126,7 +126,7 @@ Implement **"Observation Review"** from the Google Co-Scientist paper - validate
 
 **Goal:** Make GenerationAgent use literature tools instead of Tavily
 
-**Completion Report:** [PHASE6_GENERATION_LITERATURE_EXPANSION_COMPLETION.md](Phase6/PHASE6_GENERATION_LITERATURE_EXPANSION_COMPLETION.md)
+**Documentation:** [phase6_generation_literature_expansion.md](phase6_generation_literature_expansion.md)
 
 **Tasks:**
 1. ✅ Refactor `src/agents/generation.py` to use tool registry
@@ -166,7 +166,7 @@ Implement **"Observation Review"** from the Google Co-Scientist paper - validate
 
 **Goal:** Implement "Observation Review" from Google paper
 
-**Completion Report:** [PHASE6_OBSERVATION_REVIEW_COMPLETION.md](Phase6/PHASE6_OBSERVATION_REVIEW_COMPLETION.md)
+**Documentation:** [phase6_observation_review.md](phase6_observation_review.md)
 
 **Tasks:**
 1. ✅ Create `src/agents/observation_review.py` (310 lines, 8 methods)
@@ -242,7 +242,7 @@ class ObservationReviewScore(BaseModel):
 
 **Goal:** Combine PubMed + Semantic Scholar + local PDFs
 
-**Completion Report:** [PHASE6_MULTI_SOURCE_CITATION_MERGING.md](Phase6/PHASE6_MULTI_SOURCE_CITATION_MERGING.md)
+**Documentation:** [phase6_multi_source_citation_merging.md](phase6_multi_source_citation_merging.md)
 
 **Tasks Completed:**
 1. ✅ Created `src/literature/source_merger.py` (~410 lines)
@@ -1047,9 +1047,12 @@ async def test_full_citation_snowball():
 5. Write integration tests
 
 **See Also:**
-- [Phase 6 Main Plan](Phase6/PHASE6_LITERATURE_KNOWLEDGE_GRAPH.md)
-- [Semantic Scholar & Citation Graph Completion Report](Phase6/PHASE6_SEMANTIC_SCHOLAR_CITATION_GRAPH_COMPLETION.md)
-- [Literature Tools Comparison](Phase6/LITERATURE_TOOLS_COMPARISON.md)
+- [Semantic Scholar & Citation Graph](phase6_semantic_scholar_citation_graph.md)
+- [Generation Literature Expansion](phase6_generation_literature_expansion.md)
+- [Observation Review](phase6_observation_review.md)
+- [Multi-Source Citation Merging](phase6_multi_source_citation_merging.md)
+- [Diversity Sampling](phase6_diversity_sampling.md)
+- [Proximity-Aware Tournament Pairing](phase6_proximity_aware_tournament_pairing.md)
 
 ---
 
