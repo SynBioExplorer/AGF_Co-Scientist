@@ -293,13 +293,41 @@ async def get_repository_stats():
 async def delete_document(document_id: str):
     """Delete a document from the repository.
 
-    Note: This is a placeholder. Full implementation would need to:
-    1. Remove document from repository
-    2. Remove associated chunks from vector store
-    3. Clean up any references
+    Removes the document and all associated chunks from the vector store.
+
+    Args:
+        document_id: Unique document identifier
+
+    Returns:
+        Deletion status response
+
+    Raises:
+        HTTPException: If document not found or deletion fails
     """
-    # Not implemented in this phase
-    raise HTTPException(
-        status_code=501,
-        detail="Document deletion not yet implemented"
-    )
+    try:
+        repository = get_repository()
+
+        # Delete document and embeddings from vector store
+        await repository.delete_document(document_id)
+
+        logger.info("Document deleted successfully", document_id=document_id)
+
+        return {
+            "status": "deleted",
+            "document_id": document_id,
+            "message": "Document and associated embeddings deleted successfully"
+        }
+
+    except ValueError as e:
+        # Document not found
+        logger.warning("Document not found for deletion", document_id=document_id, error=str(e))
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document not found: {document_id}"
+        )
+    except Exception as e:
+        logger.error("Document deletion failed", document_id=document_id, error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete document: {str(e)}"
+        )

@@ -488,3 +488,44 @@ class PrivateRepository:
             'avg_chunks_per_doc': total_chunks / total_docs if total_docs > 0 else 0,
             'has_semantic_search': self.vector_store is not None
         }
+
+    async def delete_document(self, document_id: str) -> None:
+        """Delete a document and its embeddings from the repository.
+
+        Args:
+            document_id: Unique document identifier
+
+        Raises:
+            ValueError: If document not found
+        """
+        # Check if document exists
+        if document_id not in self.documents:
+            raise ValueError(f"Document not found: {document_id}")
+
+        doc = self.documents[document_id]
+
+        # Delete embeddings from vector store if available
+        if self.vector_store is not None and doc.chunk_ids:
+            try:
+                self.vector_store.delete(ids=doc.chunk_ids)
+                logger.info(
+                    "Deleted embeddings from vector store",
+                    document_id=document_id,
+                    chunks_deleted=len(doc.chunk_ids)
+                )
+            except Exception as e:
+                logger.error(
+                    "Failed to delete embeddings from vector store",
+                    document_id=document_id,
+                    error=str(e)
+                )
+                # Continue with document deletion even if vector store deletion fails
+
+        # Remove document from in-memory storage
+        del self.documents[document_id]
+
+        logger.info(
+            "Document deleted successfully",
+            document_id=document_id,
+            filename=doc.filename
+        )

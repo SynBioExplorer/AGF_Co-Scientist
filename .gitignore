@@ -3,6 +3,9 @@
 *.env
 !.env.example
 
+# Runtime settings (persisted user preferences)
+03_architecture/.runtime_settings.json
+
 # Python
 __pycache__/
 *.py[cod]

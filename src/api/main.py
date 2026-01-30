@@ -765,6 +765,10 @@ app.include_router(tools_router, prefix="/api/v1", tags=["Tools"])
 from src.api.documents import router as documents_router
 app.include_router(documents_router, prefix="/api/v1", tags=["Documents"])
 
+# Import and include settings router
+from src.api.settings import router as settings_router
+app.include_router(settings_router, tags=["Settings"])
+
 
 # ==============================================================================
 # Run server

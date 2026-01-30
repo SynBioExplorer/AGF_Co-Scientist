@@ -84,6 +84,22 @@ class WorkflowConfigRequest(BaseModel):
         description="Whether to enable web search for literature"
     )
 
+    # Frontend compatibility - model configuration
+    default_model: Optional[str] = Field(
+        default=None,
+        description="Default LLM model to use for all agents"
+    )
+    default_temperature: Optional[float] = Field(
+        default=0.7,
+        ge=0.0,
+        le=2.0,
+        description="Default temperature parameter for LLM generation"
+    )
+    agent_models: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Per-agent model configuration (e.g., {'generation': 'gemini-2.0-flash-exp'})"
+    )
+
 
 # ==============================================================================
 # Response Models
