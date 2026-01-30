@@ -1,7 +1,14 @@
-"""Chat interface for scientist interaction with AI Co-Scientist"""
+"""Chat interface for scientist interaction with AI Co-Scientist.
+
+This module provides:
+- Chat history management with automatic cleanup
+- Per-goal message limits to prevent memory leaks
+- TTL-based cleanup for inactive conversations
+"""
 
 from fastapi import APIRouter, HTTPException
-from datetime import datetime
+from datetime import datetime, timedelta
+from threading import Lock
 import sys
 from pathlib import Path
 import asyncio
@@ -23,20 +30,98 @@ logger = structlog.get_logger()
 router = APIRouter()
 
 
-# Store chat history per goal (in-memory for now)
+# Store chat history per goal (in-memory with limits)
 _chat_history: dict[str, list[ChatMessage]] = {}
+_chat_timestamps: dict[str, datetime] = {}  # Track last activity per goal
+_chat_lock = Lock()  # Thread-safe access
 
 
 def get_chat_history(goal_id: str) -> list[ChatMessage]:
-    """Get chat history for a goal"""
-    return _chat_history.get(goal_id, [])
+    """Get chat history for a goal.
+
+    Args:
+        goal_id: Research goal ID.
+
+    Returns:
+        List of chat messages (copy to prevent external modification).
+    """
+    with _chat_lock:
+        return list(_chat_history.get(goal_id, []))
 
 
 def add_chat_message(goal_id: str, message: ChatMessage) -> None:
-    """Add a message to chat history"""
-    if goal_id not in _chat_history:
-        _chat_history[goal_id] = []
-    _chat_history[goal_id].append(message)
+    """Add a message to chat history with automatic limits.
+
+    Enforces per-goal message limit from settings to prevent memory leaks.
+
+    Args:
+        goal_id: Research goal ID.
+        message: Chat message to add.
+    """
+    with _chat_lock:
+        if goal_id not in _chat_history:
+            _chat_history[goal_id] = []
+
+        _chat_history[goal_id].append(message)
+        _chat_timestamps[goal_id] = datetime.utcnow()
+
+        # Enforce per-goal message limit
+        max_messages = settings.chat_history_max_messages
+        if len(_chat_history[goal_id]) > max_messages:
+            # Keep only the most recent messages
+            _chat_history[goal_id] = _chat_history[goal_id][-max_messages:]
+            logger.debug(
+                "Chat history trimmed",
+                goal_id=goal_id,
+                kept_messages=max_messages
+            )
+
+
+def cleanup_old_history(max_age_hours: int = None) -> int:
+    """Remove chat history older than max_age_hours.
+
+    Call this periodically to prevent memory leaks from inactive conversations.
+
+    Args:
+        max_age_hours: Maximum age in hours. Defaults to settings value.
+
+    Returns:
+        Number of goals cleaned up.
+    """
+    if max_age_hours is None:
+        max_age_hours = settings.chat_history_max_age_hours
+
+    cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+    cleaned = 0
+
+    with _chat_lock:
+        for goal_id in list(_chat_timestamps.keys()):
+            if _chat_timestamps[goal_id] < cutoff:
+                if goal_id in _chat_history:
+                    del _chat_history[goal_id]
+                del _chat_timestamps[goal_id]
+                cleaned += 1
+
+    if cleaned > 0:
+        logger.info("Old chat history cleaned up", goals_cleaned=cleaned)
+
+    return cleaned
+
+
+def get_chat_statistics() -> dict:
+    """Get statistics about chat history storage.
+
+    Returns:
+        Dict with storage statistics.
+    """
+    with _chat_lock:
+        total_goals = len(_chat_history)
+        total_messages = sum(len(msgs) for msgs in _chat_history.values())
+        return {
+            "total_goals": total_goals,
+            "total_messages": total_messages,
+            "avg_messages_per_goal": total_messages / total_goals if total_goals > 0 else 0,
+        }
 
 
 @router.post("/chat", response_model=ChatResponse)

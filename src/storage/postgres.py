@@ -12,6 +12,7 @@ Requires PostgreSQL 15+ with pg_trgm extension for text search.
 import json
 from typing import Dict, List, Optional, Any
 from datetime import datetime
+from contextlib import asynccontextmanager
 import sys
 from pathlib import Path
 import structlog
@@ -109,13 +110,27 @@ class PostgreSQLStorage(BaseStorage):
             logger.info("PostgreSQL connection pool closed")
 
     async def health_check(self) -> bool:
-        """Check database connectivity."""
+        """Check database connectivity with timeout protection.
+
+        Returns False if:
+        - Pool is not initialized
+        - Query times out (5 second limit)
+        - Any database error occurs
+        """
+        import asyncio
+
         if not self._pool:
             return False
+
         try:
-            async with self._pool.acquire() as conn:
-                await conn.fetchval("SELECT 1")
+            # Add timeout to health check to prevent hanging
+            async with asyncio.timeout(5.0):
+                async with self._pool.acquire() as conn:
+                    await conn.fetchval("SELECT 1")
             return True
+        except asyncio.TimeoutError:
+            logger.error("Health check timed out after 5 seconds")
+            return False
         except Exception as e:
             logger.error("Health check failed", error=str(e))
             return False
@@ -1599,19 +1614,64 @@ class PostgreSQLStorage(BaseStorage):
     # Transaction Support
     # =========================================================================
 
+    @asynccontextmanager
+    async def transaction(self):
+        """Safe transaction context manager with automatic cleanup.
+
+        Usage:
+            async with storage.transaction() as conn:
+                await conn.execute(...)
+                await conn.execute(...)
+            # Auto-commits on success, auto-rollbacks on exception
+
+        This prevents connection leaks that occur when exceptions happen
+        between begin_transaction() and commit/rollback calls.
+        """
+        conn = await self._pool.acquire()
+        tx = conn.transaction()
+        try:
+            await tx.start()
+            yield conn
+            await tx.commit()
+        except Exception:
+            await tx.rollback()
+            raise
+        finally:
+            await self._pool.release(conn)
+
     async def begin_transaction(self) -> Any:
-        """Begin a database transaction."""
+        """Begin a database transaction.
+
+        WARNING: Prefer using the transaction() context manager instead.
+        This method can leak connections if exceptions occur before
+        commit/rollback is called.
+
+        Returns:
+            Dict with 'conn' and 'transaction' keys.
+        """
         conn = await self._pool.acquire()
         transaction = conn.transaction()
         await transaction.start()
         return {"conn": conn, "transaction": transaction}
 
     async def commit_transaction(self, transaction: Any) -> None:
-        """Commit a transaction."""
-        await transaction["transaction"].commit()
-        await self._pool.release(transaction["conn"])
+        """Commit a transaction.
+
+        Args:
+            transaction: Dict returned by begin_transaction().
+        """
+        try:
+            await transaction["transaction"].commit()
+        finally:
+            await self._pool.release(transaction["conn"])
 
     async def rollback_transaction(self, transaction: Any) -> None:
-        """Rollback a transaction."""
-        await transaction["transaction"].rollback()
-        await self._pool.release(transaction["conn"])
+        """Rollback a transaction.
+
+        Args:
+            transaction: Dict returned by begin_transaction().
+        """
+        try:
+            await transaction["transaction"].rollback()
+        finally:
+            await self._pool.release(transaction["conn"])

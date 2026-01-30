@@ -46,6 +46,11 @@ class RedisCache:
     - Win rates
     - System statistics
 
+    Features:
+    - Automatic reconnection on connection loss
+    - Graceful degradation (returns None on errors, doesn't crash)
+    - Health check with timeout
+
     Keys follow the pattern: coscientist:{data_type}:{identifier}
     """
 
@@ -54,6 +59,10 @@ class RedisCache:
     TOP_HYPOTHESES_TTL = 60  # 1 minute (changes frequently during tournaments)
     STATISTICS_TTL = 120  # 2 minutes
     WIN_RATE_TTL = 180  # 3 minutes
+
+    # Reconnection settings
+    MAX_RECONNECT_ATTEMPTS = 3
+    RECONNECT_DELAY = 1.0  # seconds
 
     def __init__(self, redis_url: Optional[str] = None):
         """Initialize Redis cache.
@@ -65,6 +74,7 @@ class RedisCache:
         """
         self._redis_url = redis_url
         self._client: Optional[redis.Redis] = None
+        self._connected = False
 
     async def connect(self) -> None:
         """Connect to Redis."""
@@ -83,8 +93,10 @@ class RedisCache:
             )
             # Test connection
             await self._client.ping()
+            self._connected = True
             logger.info("Redis cache connected", url=self._redis_url.split("@")[-1])
         except Exception as e:
+            self._connected = False
             logger.error("Failed to connect to Redis", error=str(e))
             raise
 
@@ -93,17 +105,84 @@ class RedisCache:
         if self._client:
             await self._client.close()
             self._client = None
+            self._connected = False
             logger.info("Redis cache disconnected")
 
-    async def health_check(self) -> bool:
-        """Check Redis connectivity."""
+    async def _ensure_connected(self) -> bool:
+        """Ensure Redis connection is alive, reconnect if needed.
+
+        Returns:
+            True if connected, False if connection failed.
+        """
+        import asyncio
+
         if not self._client:
             return False
+
+        # Quick check if we think we're connected
+        if self._connected:
+            try:
+                await self._client.ping()
+                return True
+            except Exception:
+                self._connected = False
+                logger.warning("Redis connection lost, attempting reconnect")
+
+        # Attempt reconnection with retries
+        for attempt in range(self.MAX_RECONNECT_ATTEMPTS):
+            try:
+                if self._client:
+                    await self._client.close()
+
+                self._client = await redis.from_url(
+                    self._redis_url,
+                    encoding="utf-8",
+                    decode_responses=True,
+                )
+                await self._client.ping()
+                self._connected = True
+                logger.info(
+                    "Redis reconnected successfully",
+                    attempt=attempt + 1
+                )
+                return True
+
+            except Exception as e:
+                logger.warning(
+                    "Redis reconnection attempt failed",
+                    attempt=attempt + 1,
+                    max_attempts=self.MAX_RECONNECT_ATTEMPTS,
+                    error=str(e)
+                )
+                if attempt < self.MAX_RECONNECT_ATTEMPTS - 1:
+                    await asyncio.sleep(self.RECONNECT_DELAY * (attempt + 1))
+
+        logger.error("Redis reconnection failed after all attempts")
+        return False
+
+    async def health_check(self) -> bool:
+        """Check Redis connectivity with timeout.
+
+        Returns:
+            True if healthy, False otherwise.
+        """
+        import asyncio
+
+        if not self._client:
+            return False
+
         try:
-            await self._client.ping()
+            async with asyncio.timeout(5.0):
+                await self._client.ping()
+            self._connected = True
             return True
+        except asyncio.TimeoutError:
+            logger.error("Redis health check timed out")
+            self._connected = False
+            return False
         except Exception as e:
             logger.error("Redis health check failed", error=str(e))
+            self._connected = False
             return False
 
     # =========================================================================
@@ -131,7 +210,12 @@ class RedisCache:
 
         Returns:
             List of hypotheses if cached, None otherwise.
+            Returns None on connection failure (graceful degradation).
         """
+        # Ensure connection before operation
+        if not await self._ensure_connected():
+            return None
+
         key = self._key("top_hypotheses", goal_id, str(n))
         try:
             cached = await self._client.get(key)
@@ -144,6 +228,7 @@ class RedisCache:
             return None
         except Exception as e:
             logger.warning("Cache get failed", key=key, error=str(e))
+            self._connected = False  # Mark for reconnection on next call
             return None
 
     async def set_top_hypotheses(

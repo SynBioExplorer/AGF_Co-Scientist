@@ -165,10 +165,69 @@ class CostTracker:
         """
         Check if budget is exceeded. Raises BudgetExceededError if so.
         Call this BEFORE making an LLM call.
+
+        Note: For thread-safe budget enforcement, prefer check_and_add_usage()
+        which atomically checks and adds in a single operation.
         """
-        if self.total_cost_aud >= self.budget_aud:
-            raise BudgetExceededError(self.total_cost_aud, self.budget_aud)
-        return True
+        with self._lock:
+            if self.total_cost_aud >= self.budget_aud:
+                raise BudgetExceededError(self.total_cost_aud, self.budget_aud)
+            return True
+
+    def check_and_add_usage(
+        self,
+        agent: str,
+        model: str,
+        input_tokens: int,
+        output_tokens: int
+    ) -> float:
+        """
+        Atomically check budget and add usage in a single operation.
+
+        This prevents race conditions where two concurrent threads could both
+        pass a separate check_budget() call before either adds usage.
+
+        Args:
+            agent: Agent name (e.g., "generation", "reflection")
+            model: Model name (e.g., "gemini-3-pro-preview")
+            input_tokens: Number of input tokens
+            output_tokens: Number of output tokens
+
+        Returns:
+            Cost of this call in AUD
+
+        Raises:
+            BudgetExceededError: If this call would exceed the budget
+        """
+        with self._lock:
+            # Calculate cost for this call
+            pricing = MODEL_PRICING.get(model, {"input": 1.0, "output": 4.0})
+            input_cost = (input_tokens / 1_000_000) * pricing["input"]
+            output_cost = (output_tokens / 1_000_000) * pricing["output"]
+            call_cost_usd = input_cost + output_cost
+            call_cost_aud = call_cost_usd * USD_TO_AUD
+
+            # Check if this call would exceed budget BEFORE adding
+            projected_total_aud = self.total_cost_aud + call_cost_aud
+            if projected_total_aud >= self.budget_aud:
+                raise BudgetExceededError(projected_total_aud, self.budget_aud)
+
+            # Safe to add - budget check passed
+            if agent not in self.agent_usage:
+                self.agent_usage[agent] = AgentUsage(agent_name=agent, model=model)
+            self.agent_usage[agent].add_usage(input_tokens, output_tokens, model)
+
+            # Update totals
+            self.total_cost_usd += call_cost_usd
+            self.total_input_tokens += input_tokens
+            self.total_output_tokens += output_tokens
+            self.total_calls += 1
+
+            # Persist if path is set
+            if self.persist_path:
+                self._save()
+
+            return call_cost_aud
 
     def add_usage(
         self,
@@ -179,6 +238,10 @@ class CostTracker:
     ) -> float:
         """
         Add token usage for an agent. Returns the cost of this call in AUD.
+
+        Note: This method assumes check_budget() was called separately.
+        For thread-safe operation, prefer check_and_add_usage() which
+        atomically checks and adds in a single operation.
 
         Args:
             agent: Agent name (e.g., "generation", "reflection")

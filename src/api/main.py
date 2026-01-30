@@ -1,9 +1,16 @@
-"""FastAPI application for AI Co-Scientist system"""
+"""FastAPI application for AI Co-Scientist system.
+
+This module provides the REST API with:
+- Automatic periodic cleanup of background tasks and chat history
+- Timeout protection for long-running supervisor workflows
+- Configurable CORS and API key injection
+"""
 
 from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from typing import Optional, List
+import asyncio
 import sys
 import os
 from pathlib import Path
@@ -27,10 +34,12 @@ from src.api.models import (
 )
 from pydantic import BaseModel
 from src.api.background import task_manager
+from src.api.chat import cleanup_old_history as cleanup_chat_history
 from src.storage.async_adapter import async_storage as storage
 from src.agents.supervisor import SupervisorAgent
 from src.utils.ids import generate_id
 from src.utils.logging_config import setup_logging
+from src.config import settings
 from schemas import ResearchGoal, HypothesisStatus, ScientistFeedback
 import structlog
 
@@ -38,16 +47,81 @@ import structlog
 setup_logging("INFO")
 logger = structlog.get_logger()
 
+# Track cleanup tasks for graceful shutdown
+_cleanup_tasks: List[asyncio.Task] = []
+
+
+async def _periodic_chat_cleanup():
+    """Background task to clean up old chat history."""
+    while True:
+        try:
+            await asyncio.sleep(settings.task_cleanup_interval_hours * 3600)
+            cleaned = cleanup_chat_history(max_age_hours=settings.chat_history_max_age_hours)
+            if cleaned > 0:
+                logger.info("Periodic chat cleanup completed", goals_cleaned=cleaned)
+        except asyncio.CancelledError:
+            logger.info("Chat cleanup task cancelled")
+            break
+        except Exception as e:
+            logger.error("Chat cleanup failed", error=str(e))
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan handler for startup and shutdown"""
+    """Application lifespan handler for startup and shutdown.
+
+    Startup:
+    - Connect to storage backend
+    - Start periodic cleanup tasks for background tasks and chat history
+
+    Shutdown:
+    - Cancel all cleanup tasks
+    - Clean up all completed tasks
+    - Disconnect from storage
+    """
+    global _cleanup_tasks
+
     # Startup
-    logger.info("AI Co-Scientist API starting up")
+    logger.info(
+        "AI Co-Scientist API starting up",
+        task_cleanup_interval=settings.task_cleanup_interval_hours,
+        task_max_age=settings.task_max_age_hours,
+        chat_max_age=settings.chat_history_max_age_hours,
+    )
     await storage.connect()
+
+    # Start periodic cleanup tasks
+    task_cleanup = asyncio.create_task(
+        task_manager.start_periodic_cleanup(
+            interval_hours=settings.task_cleanup_interval_hours,
+            max_age_hours=settings.task_max_age_hours
+        )
+    )
+    _cleanup_tasks.append(task_cleanup)
+
+    chat_cleanup = asyncio.create_task(_periodic_chat_cleanup())
+    _cleanup_tasks.append(chat_cleanup)
+
+    logger.info("Periodic cleanup tasks started")
+
     yield
+
     # Shutdown
+    logger.info("AI Co-Scientist API shutting down")
+
+    # Cancel cleanup tasks
+    for task in _cleanup_tasks:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    _cleanup_tasks.clear()
+
+    # Clean up all completed tasks before shutdown
+    task_manager.cleanup_completed_tasks(max_age_hours=0)
     task_manager.shutdown()
+
     await storage.disconnect()
     logger.info("AI Co-Scientist API shutdown complete")
 
@@ -134,7 +208,7 @@ async def run_supervisor_workflow(
     max_iterations: int,
     enable_evolution: bool
 ) -> str:
-    """Run supervisor-orchestrated workflow asynchronously.
+    """Run supervisor-orchestrated workflow asynchronously with timeout protection.
 
     This replaces the simplified CoScientistWorkflow with the full
     SupervisorAgent which provides:
@@ -142,6 +216,7 @@ async def run_supervisor_workflow(
     - Terminal condition detection (budget, convergence, quality)
     - Checkpoint/resume capability
     - Statistics tracking for weight adaptation
+    - Timeout protection to prevent hung workflows
 
     Args:
         goal: Research goal to work on.
@@ -150,31 +225,66 @@ async def run_supervisor_workflow(
 
     Returns:
         Status message with summary of execution.
+
+    Raises:
+        asyncio.TimeoutError: If workflow exceeds maximum allowed time.
     """
+    # Calculate total timeout based on iterations
+    # Each iteration gets supervisor_iteration_timeout seconds
+    total_timeout = settings.supervisor_iteration_timeout * max_iterations
+
     logger.info(
         "Starting SupervisorAgent execution",
         goal_id=goal.id,
         max_iterations=max_iterations,
-        enable_evolution=enable_evolution
+        enable_evolution=enable_evolution,
+        total_timeout_seconds=total_timeout
     )
 
     supervisor = SupervisorAgent(storage)
 
-    # Execute supervisor orchestration
-    # Note: enable_evolution is handled by the supervisor's dynamic weighting
-    # The Evolution agent weight is adjusted based on effectiveness
-    result = await supervisor.execute(
-        research_goal=goal,
-        max_iterations=max_iterations
-    )
+    try:
+        # Execute supervisor orchestration with timeout protection
+        # Note: enable_evolution is handled by the supervisor's dynamic weighting
+        # The Evolution agent weight is adjusted based on effectiveness
+        result = await asyncio.wait_for(
+            supervisor.execute(
+                research_goal=goal,
+                max_iterations=max_iterations
+            ),
+            timeout=total_timeout
+        )
 
-    logger.info(
-        "SupervisorAgent execution completed",
-        goal_id=goal.id,
-        result=result
-    )
+        logger.info(
+            "SupervisorAgent execution completed",
+            goal_id=goal.id,
+            result=result
+        )
 
-    return result
+        return result
+
+    except asyncio.TimeoutError:
+        error_msg = (
+            f"Workflow timed out after {total_timeout}s "
+            f"({max_iterations} iterations × {settings.supervisor_iteration_timeout}s)"
+        )
+        logger.error(
+            "SupervisorAgent execution timed out",
+            goal_id=goal.id,
+            timeout_seconds=total_timeout,
+            max_iterations=max_iterations
+        )
+        # Return error message instead of raising (background task handles gracefully)
+        return f"ERROR: {error_msg}"
+
+    except Exception as e:
+        logger.error(
+            "SupervisorAgent execution failed",
+            goal_id=goal.id,
+            error=str(e),
+            error_type=type(e).__name__
+        )
+        return f"ERROR: {str(e)}"
 
 
 async def compute_statistics(goal_id: str) -> dict:

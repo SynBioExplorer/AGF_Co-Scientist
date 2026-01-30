@@ -31,6 +31,7 @@ class HypothesisStatus(str, Enum):
     IN_TOURNAMENT = "in_tournament"  # Active in ranking tournament
     EVOLVED = "evolved"  # Has been refined by Evolution agent
     ARCHIVED = "archived"  # No longer active (superseded or rejected)
+    REQUIRES_SAFETY_REVIEW = "requires_safety_review"  # Flagged for human safety review
 
 
 class ReviewType(str, Enum):

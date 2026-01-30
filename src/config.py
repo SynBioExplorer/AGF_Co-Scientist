@@ -76,6 +76,25 @@ class Settings(BaseSettings):
     tool_timeout_seconds: int = 30
     tool_max_results: int = 10
 
+    # LLM Timeout and Retry Configuration
+    # Scientific hypothesis generation can take 60-180 seconds for complex reasoning
+    llm_timeout_seconds: int = 300  # 5 minutes for complex scientific tasks
+    llm_max_retries: int = 3  # Total attempts = max_retries + 1 = 4
+    llm_retry_base_delay: float = 1.0  # Exponential backoff: 1s, 2s, 4s, 8s...
+    llm_retry_max_delay: float = 30.0  # Cap backoff at 30 seconds
+
+    # Supervisor execution timeout (entire workflow iteration)
+    supervisor_iteration_timeout: int = 600  # 10 minutes per iteration
+
+    # Memory cleanup configuration
+    task_cleanup_interval_hours: int = 1  # Run cleanup every hour
+    task_max_age_hours: int = 24  # Remove completed tasks after 24 hours
+    chat_history_max_messages: int = 1000  # Per goal message limit
+    chat_history_max_age_hours: int = 168  # Remove chat history after 7 days
+
+    # Safety configuration
+    safety_threshold: float = 0.5  # Minimum safety score (0.0-1.0) for hypotheses
+
     # Tournament Pairing Configuration (Phase 5 Enhancement - Proximity-Aware Matching)
     proximity_aware_pairing: bool = True  # Enable proximity-based tournament pairing
     proximity_pairing_weight: float = 0.7  # Proportion of within-cluster matches (70%)

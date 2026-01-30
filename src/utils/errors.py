@@ -21,6 +21,33 @@ class LLMClientError(CoScientistError):
     pass
 
 
+class RetryableError(LLMClientError):
+    """Raised for transient LLM errors that can be retried.
+
+    These include rate limits, timeouts, and transient server errors.
+    The retry mechanism should catch these and attempt again with backoff.
+    """
+    pass
+
+
+class LLMTimeoutError(RetryableError):
+    """Raised when LLM invocation exceeds the configured timeout.
+
+    This is a retryable error - the request may succeed on retry
+    if the API is experiencing temporary slowness.
+    """
+    pass
+
+
+class LLMRateLimitError(RetryableError):
+    """Raised when API rate limit is exceeded (HTTP 429).
+
+    This is a retryable error - the request should succeed after
+    waiting for the rate limit window to reset.
+    """
+    pass
+
+
 class AgentExecutionError(CoScientistError):
     """Raised when agent execution fails"""
     pass

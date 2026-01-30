@@ -52,6 +52,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent / "04_Scripts"))
 from cost_tracker import get_tracker, BudgetExceededError
 
 from src.agents.base import BaseAgent
+from src.agents.safety import SafetyAgent
 from src.llm.factory import get_llm_client
 from src.supervisor.task_queue import TaskQueue
 from src.supervisor.statistics import SupervisorStatistics
@@ -100,6 +101,10 @@ class SupervisorAgent(BaseAgent):
         self.agent_weights: Dict[AgentType, float] = self._initialize_weights()
         self.iteration = 0
         self.cost_tracker = get_tracker(budget_aud=settings.budget_aud)
+
+        # Safety agent for hypothesis review
+        self.safety_agent = SafetyAgent()
+        self.safety_threshold = settings.safety_threshold
 
         # Agent instances (lazy-loaded)
         self._agents: Dict[AgentType, Any] = {}
@@ -666,21 +671,62 @@ Respond with ONLY the JSON object."""
                 method=method,
                 use_web_search=use_web_search
             )
+
+            # Safety review before storing hypothesis
+            try:
+                safety_assessment = await self.safety_agent.review_hypothesis(hypothesis)
+
+                # Check if hypothesis passes safety threshold
+                if not self.safety_agent.is_safe(safety_assessment, self.safety_threshold):
+                    logger.warning(
+                        "hypothesis_failed_safety_review",
+                        hypothesis_id=hypothesis.id,
+                        hypothesis_title=hypothesis.title[:50],
+                        safety_score=safety_assessment.get("safety_score"),
+                        risks=safety_assessment.get("risks", [])[:3]
+                    )
+                    # Mark hypothesis as requiring safety review
+                    hypothesis.status = HypothesisStatus.REQUIRES_SAFETY_REVIEW
+
+                # Store safety assessment in hypothesis metadata
+                # Note: This would ideally be stored in a dedicated field
+                if not hasattr(hypothesis, 'metadata') or hypothesis.metadata is None:
+                    hypothesis.metadata = {}
+                hypothesis.metadata['safety_assessment'] = safety_assessment
+
+            except Exception as e:
+                logger.error(
+                    "safety_review_failed",
+                    hypothesis_id=hypothesis.id,
+                    error=str(e)
+                )
+                # Continue without safety review if it fails
+                # (graceful degradation - don't block hypothesis generation)
+
             await self.storage.add_hypothesis(hypothesis)
             result = {"hypothesis_id": hypothesis.id}
 
-            # Create follow-up reflection task
-            self.task_queue.add_task(AgentTask(
-                id=generate_task_id(),
-                agent_type=AgentType.REFLECTION,
-                task_type="review_hypothesis",
-                priority=9,
-                parameters={
-                    "hypothesis_id": hypothesis.id,
-                    "review_type": ReviewType.INITIAL.value,
-                },
-                status="pending"
-            ))
+            # Only create follow-up reflection task if hypothesis passed safety review
+            # or if safety review wasn't performed (graceful degradation)
+            if hypothesis.status != HypothesisStatus.REQUIRES_SAFETY_REVIEW:
+                # Create follow-up reflection task
+                self.task_queue.add_task(AgentTask(
+                    id=generate_task_id(),
+                    agent_type=AgentType.REFLECTION,
+                    task_type="review_hypothesis",
+                    priority=9,
+                    parameters={
+                        "hypothesis_id": hypothesis.id,
+                        "review_type": ReviewType.INITIAL.value,
+                    },
+                    status="pending"
+                ))
+            else:
+                logger.info(
+                    "hypothesis_requires_human_review",
+                    hypothesis_id=hypothesis.id,
+                    message="Hypothesis flagged for safety review - skipping automated reflection"
+                )
 
         elif task.agent_type == AgentType.REFLECTION:
             hypothesis_id = params["hypothesis_id"]
@@ -746,6 +792,32 @@ Respond with ONLY the JSON object."""
                     strategy=strategy,
                     reviews=reviews if reviews else None
                 )
+
+                # Safety review for evolved hypothesis
+                try:
+                    safety_assessment = await self.safety_agent.review_hypothesis(evolved)
+
+                    if not self.safety_agent.is_safe(safety_assessment, self.safety_threshold):
+                        logger.warning(
+                            "evolved_hypothesis_failed_safety_review",
+                            evolved_id=evolved.id,
+                            parent_id=hypothesis_id,
+                            safety_score=safety_assessment.get("safety_score"),
+                            risks=safety_assessment.get("risks", [])[:3]
+                        )
+                        evolved.status = HypothesisStatus.REQUIRES_SAFETY_REVIEW
+
+                    if not hasattr(evolved, 'metadata') or evolved.metadata is None:
+                        evolved.metadata = {}
+                    evolved.metadata['safety_assessment'] = safety_assessment
+
+                except Exception as e:
+                    logger.error(
+                        "safety_review_failed_for_evolved",
+                        evolved_id=evolved.id,
+                        error=str(e)
+                    )
+
                 await self.storage.add_hypothesis(evolved)
 
                 # Mark original as evolved

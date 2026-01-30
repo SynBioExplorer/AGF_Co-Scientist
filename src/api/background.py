@@ -1,17 +1,34 @@
-"""Background task management for long-running operations"""
+"""Background task management for long-running operations.
+
+This module provides task management with:
+- Automatic cleanup of completed tasks to prevent memory leaks
+- Result size limiting to prevent memory bloat
+- Periodic cleanup via background task
+- Thread-safe operations
+"""
 
 from typing import Dict, Optional, Callable, Any, List
 import asyncio
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 import structlog
 
 logger = structlog.get_logger()
 
+# Maximum size for stored results (10KB)
+MAX_RESULT_SIZE = 10 * 1024
+
 
 class BackgroundTaskManager:
     """Manage background tasks for supervisor execution and long-running operations.
+
+    Features:
+    - Automatic periodic cleanup of old completed tasks
+    - Result size limiting to prevent memory bloat
+    - Thread-safe status updates
+    - Graceful shutdown with task cancellation
 
     Since the workflow runs synchronously, we use a ThreadPoolExecutor to run
     workflows in background threads without blocking the API.
@@ -27,6 +44,8 @@ class BackgroundTaskManager:
         self._task_status: Dict[str, Dict[str, Any]] = {}
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._cleanup_task: Optional[asyncio.Task] = None
+        self._lock = Lock()  # Thread-safe status updates
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
         """Get the running event loop.
@@ -38,6 +57,63 @@ class BackgroundTaskManager:
             # Get the running loop from FastAPI's context
             self._loop = asyncio.get_running_loop()
         return self._loop
+
+    async def start_periodic_cleanup(
+        self,
+        interval_hours: int = 1,
+        max_age_hours: int = 24
+    ) -> None:
+        """Start background cleanup task that runs periodically.
+
+        This should be called during application startup to ensure
+        old completed tasks are automatically cleaned up.
+
+        Args:
+            interval_hours: How often to run cleanup (default: 1 hour)
+            max_age_hours: Maximum age for completed tasks (default: 24 hours)
+        """
+        logger.info(
+            "Starting periodic task cleanup",
+            interval_hours=interval_hours,
+            max_age_hours=max_age_hours
+        )
+
+        while True:
+            try:
+                await asyncio.sleep(interval_hours * 3600)
+                cleaned = self.cleanup_completed_tasks(max_age_hours=max_age_hours)
+                logger.info(
+                    "Periodic cleanup completed",
+                    tasks_cleaned=cleaned,
+                    tasks_remaining=len(self._task_status)
+                )
+            except asyncio.CancelledError:
+                logger.info("Periodic cleanup task cancelled")
+                break
+            except Exception as e:
+                logger.error("Periodic cleanup failed", error=str(e))
+                # Continue running despite errors
+
+    def _truncate_result(self, result: Any) -> Any:
+        """Truncate result to prevent memory bloat.
+
+        Large results are converted to string and truncated.
+
+        Args:
+            result: The task result to potentially truncate.
+
+        Returns:
+            Truncated result if too large, original otherwise.
+        """
+        if result is None:
+            return None
+
+        result_str = str(result)
+        if len(result_str) > MAX_RESULT_SIZE:
+            truncated = result_str[:MAX_RESULT_SIZE]
+            return f"{truncated}...[truncated, original size: {len(result_str)} bytes]"
+
+        return result
 
     def start_sync_task(
         self,
@@ -61,15 +137,16 @@ class BackgroundTaskManager:
         """
         task_id = str(uuid.uuid4())
 
-        # Initialize task status
-        self._task_status[task_id] = {
-            "goal_id": goal_id,
-            "status": "running",
-            "started_at": datetime.utcnow(),
-            "completed_at": None,
-            "error": None,
-            "result": None
-        }
+        # Initialize task status (thread-safe)
+        with self._lock:
+            self._task_status[task_id] = {
+                "goal_id": goal_id,
+                "status": "running",
+                "started_at": datetime.utcnow(),
+                "completed_at": None,
+                "error": None,
+                "result": None
+            }
 
         logger.info("Background task started", task_id=task_id, goal_id=goal_id)
 
@@ -108,15 +185,16 @@ class BackgroundTaskManager:
         """
         task_id = str(uuid.uuid4())
 
-        # Initialize task status
-        self._task_status[task_id] = {
-            "goal_id": goal_id,
-            "status": "running",
-            "started_at": datetime.utcnow(),
-            "completed_at": None,
-            "error": None,
-            "result": None
-        }
+        # Initialize task status (thread-safe)
+        with self._lock:
+            self._task_status[task_id] = {
+                "goal_id": goal_id,
+                "status": "running",
+                "started_at": datetime.utcnow(),
+                "completed_at": None,
+                "error": None,
+                "result": None
+            }
 
         # Create task
         task = asyncio.create_task(coroutine)
@@ -130,37 +208,45 @@ class BackgroundTaskManager:
 
     def _on_task_success(self, task_id: str, result: Any) -> None:
         """Handle successful task completion."""
-        self._task_status[task_id]["status"] = "completed"
-        self._task_status[task_id]["completed_at"] = datetime.utcnow()
-        self._task_status[task_id]["result"] = result
+        with self._lock:
+            if task_id in self._task_status:
+                self._task_status[task_id]["status"] = "completed"
+                self._task_status[task_id]["completed_at"] = datetime.utcnow()
+                self._task_status[task_id]["result"] = self._truncate_result(result)
         logger.info("Background task completed successfully", task_id=task_id)
 
     def _on_task_error(self, task_id: str, error: Exception) -> None:
         """Handle task error."""
-        self._task_status[task_id]["status"] = "failed"
-        self._task_status[task_id]["completed_at"] = datetime.utcnow()
-        self._task_status[task_id]["error"] = str(error)
+        with self._lock:
+            if task_id in self._task_status:
+                self._task_status[task_id]["status"] = "failed"
+                self._task_status[task_id]["completed_at"] = datetime.utcnow()
+                self._task_status[task_id]["error"] = str(error)[:1000]  # Limit error size
         logger.error("Background task failed", task_id=task_id, error=str(error))
 
     def _on_task_complete(self, task_id: str, task: asyncio.Task) -> None:
         """Callback when async task completes."""
-        if task.cancelled():
-            self._task_status[task_id]["status"] = "cancelled"
-            logger.info("Background task cancelled", task_id=task_id)
-        elif task.exception():
-            self._task_status[task_id]["status"] = "failed"
-            self._task_status[task_id]["error"] = str(task.exception())
-            logger.error(
-                "Background task failed",
-                task_id=task_id,
-                error=str(task.exception())
-            )
-        else:
-            self._task_status[task_id]["status"] = "completed"
-            self._task_status[task_id]["result"] = task.result()
-            logger.info("Background task completed", task_id=task_id)
+        with self._lock:
+            if task_id not in self._task_status:
+                return
 
-        self._task_status[task_id]["completed_at"] = datetime.utcnow()
+            if task.cancelled():
+                self._task_status[task_id]["status"] = "cancelled"
+                logger.info("Background task cancelled", task_id=task_id)
+            elif task.exception():
+                self._task_status[task_id]["status"] = "failed"
+                self._task_status[task_id]["error"] = str(task.exception())[:1000]
+                logger.error(
+                    "Background task failed",
+                    task_id=task_id,
+                    error=str(task.exception())
+                )
+            else:
+                self._task_status[task_id]["status"] = "completed"
+                self._task_status[task_id]["result"] = self._truncate_result(task.result())
+                logger.info("Background task completed", task_id=task_id)
+
+            self._task_status[task_id]["completed_at"] = datetime.utcnow()
 
     def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
         """Get task status.
@@ -171,7 +257,9 @@ class BackgroundTaskManager:
         Returns:
             Task status dict or None if not found
         """
-        return self._task_status.get(task_id)
+        with self._lock:
+            status = self._task_status.get(task_id)
+            return dict(status) if status else None  # Return copy
 
     def get_tasks_for_goal(self, goal_id: str) -> List[Dict[str, Any]]:
         """Get all tasks for a specific goal.
@@ -182,11 +270,32 @@ class BackgroundTaskManager:
         Returns:
             List of task status dicts
         """
-        return [
-            {"task_id": tid, **status}
-            for tid, status in self._task_status.items()
-            if status["goal_id"] == goal_id
-        ]
+        with self._lock:
+            return [
+                {"task_id": tid, **dict(status)}
+                for tid, status in self._task_status.items()
+                if status["goal_id"] == goal_id
+            ]
+
+    def get_statistics(self) -> Dict[str, int]:
+        """Get task manager statistics.
+
+        Returns:
+            Dict with counts of tasks in each status.
+        """
+        with self._lock:
+            stats = {
+                "total": len(self._task_status),
+                "running": 0,
+                "completed": 0,
+                "failed": 0,
+                "cancelled": 0
+            }
+            for status in self._task_status.values():
+                status_key = status["status"]
+                if status_key in stats:
+                    stats[status_key] += 1
+            return stats
 
     def cancel_task(self, task_id: str) -> bool:
         """Cancel a running task.
@@ -205,8 +314,10 @@ class BackgroundTaskManager:
             return False
 
         task.cancel()
-        self._task_status[task_id]["status"] = "cancelled"
-        self._task_status[task_id]["completed_at"] = datetime.utcnow()
+        with self._lock:
+            if task_id in self._task_status:
+                self._task_status[task_id]["status"] = "cancelled"
+                self._task_status[task_id]["completed_at"] = datetime.utcnow()
         logger.info("Background task cancelled", task_id=task_id)
         return True
 
@@ -214,26 +325,27 @@ class BackgroundTaskManager:
         """Remove completed tasks older than specified age.
 
         Args:
-            max_age_hours: Maximum age in hours before cleanup
+            max_age_hours: Maximum age in hours before cleanup.
+                Use 0 to clean all completed tasks regardless of age.
 
         Returns:
             Number of tasks cleaned up
         """
-        from datetime import timedelta
-
         now = datetime.utcnow()
-        cutoff = now - timedelta(hours=max_age_hours)
+        cutoff = now - timedelta(hours=max_age_hours) if max_age_hours > 0 else now
         cleaned = 0
 
-        for task_id in list(self._task_status.keys()):
-            status = self._task_status[task_id]
-            if status["status"] in ("completed", "failed", "cancelled"):
-                completed_at = status.get("completed_at")
-                if completed_at and completed_at < cutoff:
-                    del self._task_status[task_id]
-                    if task_id in self._tasks:
-                        del self._tasks[task_id]
-                    cleaned += 1
+        with self._lock:
+            for task_id in list(self._task_status.keys()):
+                status = self._task_status[task_id]
+                if status["status"] in ("completed", "failed", "cancelled"):
+                    completed_at = status.get("completed_at")
+                    # Clean if older than cutoff, or if max_age_hours is 0
+                    if max_age_hours == 0 or (completed_at and completed_at < cutoff):
+                        del self._task_status[task_id]
+                        if task_id in self._tasks:
+                            del self._tasks[task_id]
+                        cleaned += 1
 
         if cleaned > 0:
             logger.info("Cleaned up old tasks", count=cleaned)
@@ -242,19 +354,27 @@ class BackgroundTaskManager:
 
     def shutdown(self) -> None:
         """Shutdown the task manager and executor."""
+        # Cancel cleanup task if running
+        if self._cleanup_task and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
+
         # Cancel all running tasks
-        for task_id, task in self._tasks.items():
+        for task_id, task in list(self._tasks.items()):
             if not task.done():
                 task.cancel()
-                self._task_status[task_id]["status"] = "cancelled"
+                with self._lock:
+                    if task_id in self._task_status:
+                        self._task_status[task_id]["status"] = "cancelled"
+
+        # Clear all task data to free memory
+        with self._lock:
+            self._task_status.clear()
+            self._tasks.clear()
 
         # Shutdown thread pool
         self._executor.shutdown(wait=False)
         logger.info("Background task manager shutdown")
 
-
-# Import List for type hint
-from typing import List
 
 # Global instance
 task_manager = BackgroundTaskManager()
