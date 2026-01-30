@@ -2,6 +2,7 @@
 
 from typing import Dict, Any, List, Tuple, Optional
 from pydantic import ValidationError as PydanticValidationError
+import asyncio
 import sys
 import json
 import re
@@ -135,10 +136,15 @@ class GenerationAgent(BaseAgent):
         # Merge papers from multiple sources (Phase 6 Week 4)
         all_papers = pubmed_results + semantic_results
         if all_papers:
-            merged_papers = self.merger.merge_papers(all_papers)
+            # Wrap sync merger in thread to avoid blocking event loop
+            merged_papers = await asyncio.to_thread(self.merger.merge_papers, all_papers)
 
             # Log merge statistics
-            stats = self.merger.get_merge_statistics(all_papers, merged_papers)
+            stats = await asyncio.to_thread(
+                self.merger.get_merge_statistics,
+                all_papers,
+                merged_papers
+            )
             self.logger.info(
                 "Papers merged",
                 total_before=stats["total_before"],

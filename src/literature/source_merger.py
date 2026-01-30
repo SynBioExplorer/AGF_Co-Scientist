@@ -10,6 +10,8 @@ Implements Phase 6 Week 4: Multi-Source Citation Merging
 
 from typing import List, Dict, Any, Optional, Tuple
 from collections import defaultdict
+import hashlib
+import uuid
 import structlog
 
 from src.literature.citation_graph import CitationGraph, CitationNode
@@ -66,9 +68,9 @@ class CitationSourceMerger:
         if paper_id:
             return f"S2:{paper_id}"
 
-        # Fallback: use title hash if available
+        # Fallback: use title hash if available (SHA256 for deterministic hashing)
         if "title" in paper_data:
-            title_hash = str(hash(paper_data["title"]))[-8:]
+            title_hash = hashlib.sha256(paper_data["title"].encode()).hexdigest()[:16]
             return f"TITLE_HASH:{title_hash}"
 
         return None
@@ -143,12 +145,13 @@ class CitationSourceMerger:
             if group_id is None:
                 group_id = self.get_canonical_id(paper)
                 if not group_id:
-                    # No ID found - keep as is
+                    # No ID found - generate UUID to preserve paper
+                    group_id = f"UUID:{uuid.uuid4()}"
                     self.logger.warning(
-                        "Paper has no identifiable ID",
-                        title=paper.get("title", "Unknown")[:50]
+                        "Generated UUID for paper without IDs",
+                        group_id=group_id,
+                        title=paper.get("title", "NO_TITLE")[:50]
                     )
-                    continue
 
             # Map all IDs from this paper to the group
             for id_type, id_value in all_ids.items():
@@ -305,10 +308,39 @@ class CitationSourceMerger:
         if all_citations:
             # Deduplicate citations by ID
             unique_citations = {}
+            seen_titles = set()  # For citations without IDs
+
             for citation in all_citations:
                 citation_id = self.get_canonical_id(citation)
-                if citation_id and citation_id not in unique_citations:
-                    unique_citations[citation_id] = citation
+
+                if citation_id:
+                    # Has ID - use standard deduplication
+                    if citation_id not in unique_citations:
+                        # Set canonical_id in the citation dict for reference
+                        citation["canonical_id"] = citation_id
+                        unique_citations[citation_id] = citation
+                else:
+                    # No ID - use title as fallback, generate UUID if needed
+                    title = citation.get("title", "").strip()
+                    if title and title not in seen_titles:
+                        seen_titles.add(title)
+                        # Generate UUID for citations without any identifier
+                        generated_id = f"UUID:{uuid.uuid4()}"
+                        citation["canonical_id"] = generated_id
+                        unique_citations[generated_id] = citation
+                        self.logger.warning(
+                            "Citation without IDs preserved with UUID",
+                            title=title[:50]
+                        )
+                    elif not title:
+                        # No title either - generate UUID but log as problematic
+                        generated_id = f"UUID:{uuid.uuid4()}"
+                        citation["canonical_id"] = generated_id
+                        unique_citations[generated_id] = citation
+                        self.logger.warning(
+                            "Citation without IDs or title preserved with UUID",
+                            uuid=generated_id
+                        )
 
             merged["citations"] = list(unique_citations.values())
 
@@ -409,6 +441,29 @@ class CitationSourceMerger:
         for source, target in edge_set:
             merged_graph.add_citation(source, target)
 
+        # Recalculate citation counts from actual edges to prevent double-counting
+        # (node_dict may have citation_count that gets incremented again by add_citation)
+        for node_id, node in merged_graph.nodes.items():
+            incoming_edges = [e for e in merged_graph.edges if e.target_id == node_id]
+            outgoing_edges = [e for e in merged_graph.edges if e.source_id == node_id]
+            node.citation_count = len(incoming_edges)
+            node.reference_count = len(outgoing_edges)
+
+        # Validate graph integrity before returning
+        validation = self.validate_graph_integrity(merged_graph)
+
+        if validation["mismatched_counts"]:
+            self.logger.warning(
+                "Citation count mismatches detected (should not occur after recalculation)",
+                issues=validation["mismatched_counts"]
+            )
+
+        if validation["duplicate_edges"]:
+            self.logger.warning(
+                "Duplicate edges detected",
+                count=len(validation["duplicate_edges"])
+            )
+
         self.logger.info(
             "Citation graphs merged",
             input_graphs=len(graphs),
@@ -444,6 +499,69 @@ class CitationSourceMerger:
             raise ValueError("Cannot resolve conflicts for papers without identifiable IDs")
 
         return self._merge_paper_group(canonical_id, [paper_a, paper_b])
+
+    def validate_graph_integrity(self, graph: CitationGraph) -> Dict[str, Any]:
+        """
+        Validate citation graph integrity after merge.
+
+        Checks for:
+        - Orphaned edges (edges referencing non-existent nodes)
+        - Citation count mismatches (stored count != actual edge count)
+        - Duplicate edges
+
+        Args:
+            graph: CitationGraph to validate
+
+        Returns:
+            Dict with validation results and warnings
+
+        Raises:
+            ValueError if critical issues found (orphaned edges)
+        """
+        issues = {
+            "orphaned_edges": [],
+            "mismatched_counts": [],
+            "duplicate_edges": []
+        }
+
+        # Check all edges reference existing nodes
+        for edge in graph.edges:
+            if edge.source_id not in graph.nodes:
+                issues["orphaned_edges"].append(
+                    f"Source {edge.source_id} not in nodes"
+                )
+            if edge.target_id not in graph.nodes:
+                issues["orphaned_edges"].append(
+                    f"Target {edge.target_id} not in nodes"
+                )
+
+        # Check citation counts match edges
+        for node_id, node in graph.nodes.items():
+            incoming = [e for e in graph.edges if e.target_id == node_id]
+            actual = len(incoming)
+
+            if node.citation_count != actual:
+                issues["mismatched_counts"].append({
+                    "node": node_id,
+                    "stored": node.citation_count,
+                    "actual": actual
+                })
+
+        # Check for duplicate edges
+        edge_set = set()
+        for edge in graph.edges:
+            edge_key = f"{edge.source_id}->{edge.target_id}"
+            if edge_key in edge_set:
+                issues["duplicate_edges"].append(edge_key)
+            edge_set.add(edge_key)
+
+        # Raise on critical issues
+        if issues["orphaned_edges"]:
+            raise ValueError(
+                f"Graph integrity violation: {issues['orphaned_edges']}"
+            )
+
+        return issues
 
     def get_merge_statistics(
         self,

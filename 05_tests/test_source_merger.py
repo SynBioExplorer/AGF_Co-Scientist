@@ -353,8 +353,9 @@ def test_merge_citation_graphs():
 
     # Verify Paper B was merged correctly
     paper_b_merged = merged_graph.nodes["PMID:12345"]
-    # Citation count may be incremented by add_citation calls (75 + 1 from being cited)
-    assert paper_b_merged.citation_count >= 75  # At least the max from merge
+    # Citation count should match actual edges (A -> B = 1 citation)
+    # Recalculated from edges to prevent double-counting
+    assert paper_b_merged.citation_count == 1  # Accurate count from edges
     assert len(paper_b_merged.authors) == 2  # Longest list (["Author 2", "Author 3"])
 
     # Verify edges
