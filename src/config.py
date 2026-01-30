@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     proximity_graph_refresh_frequency: int = 3  # Refresh proximity graph every N iterations
     min_cluster_size_for_pairing: int = 2  # Minimum hypotheses per cluster for pairing
 
+    # Diversity Sampling Configuration (Phase 6B - UX Enhancement)
+    diversity_sampling_enabled: bool = True  # Enable diversity sampling feature
+    diversity_sampling_for_overview: bool = True  # Use in final overview generation
+    diversity_sampling_min_elo: float = 1200.0  # Minimum Elo rating for selection
+    diversity_sampling_default_n: int = 10  # Default number of diverse hypotheses
+
     # Paths
     project_root: Path = Path(__file__).parent.parent
     prompts_dir: Path = project_root / "02_Prompts"

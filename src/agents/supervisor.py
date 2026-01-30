@@ -880,10 +880,24 @@ Respond with ONLY the JSON object."""
             if not agent:
                 return None
 
-            # Get top hypotheses
-            top_hypotheses = await self.storage.get_top_hypotheses(
-                n=5, goal_id=research_goal.id
-            )
+            # Get top hypotheses (use diversity sampling if enabled)
+            from src.config import settings
+            if settings.diversity_sampling_for_overview:
+                top_hypotheses = await self.storage.get_diverse_hypotheses(
+                    goal_id=research_goal.id,
+                    n=5,
+                    min_elo_rating=settings.diversity_sampling_min_elo,
+                    cluster_balance=True
+                )
+                logger.info(
+                    "supervisor_final_overview_diverse_sampling",
+                    goal_id=research_goal.id,
+                    num_hypotheses=len(top_hypotheses)
+                )
+            else:
+                top_hypotheses = await self.storage.get_top_hypotheses(
+                    n=5, goal_id=research_goal.id
+                )
 
             # Get or generate meta-review
             meta_review = await self.storage.get_meta_review(research_goal.id)

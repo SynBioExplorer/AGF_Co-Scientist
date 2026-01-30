@@ -98,3 +98,33 @@ class ToolRegistry:
 
 # Global registry instance
 registry = ToolRegistry()
+
+
+def get_tool_registry() -> ToolRegistry:
+    """Get the global tool registry instance"""
+    return registry
+
+
+def initialize_tools() -> ToolRegistry:
+    """
+    Initialize and register all available tools.
+
+    Returns:
+        ToolRegistry with all tools registered
+    """
+    # Import and register PubMed tool
+    try:
+        from src.tools.pubmed import register_pubmed_tool
+        register_pubmed_tool()
+    except ImportError as e:
+        logger.warning("Could not register PubMed tool", error=str(e))
+
+    # Import and register Semantic Scholar tool
+    try:
+        from src.tools.semantic_scholar import register_semantic_scholar_tool
+        register_semantic_scholar_tool()
+    except ImportError as e:
+        logger.warning("Could not register Semantic Scholar tool", error=str(e))
+
+    logger.info("Tool registry initialized", num_tools=len(registry.list_tools()))
+    return registry

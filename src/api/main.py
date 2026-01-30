@@ -376,24 +376,51 @@ async def get_hypotheses(
     goal_id: str,
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(10, ge=1, le=100, description="Results per page"),
-    sort_by: str = Query("elo", pattern="^(elo|created|title)$", description="Sort field"),
+    sort_by: str = Query("elo", pattern="^(elo|created|title|diverse)$", description="Sort field or sampling strategy"),
+    min_elo: float = Query(1200.0, ge=0, le=3000, description="Minimum Elo rating filter"),
 ):
-    """Get paginated list of hypotheses for a research goal"""
+    """
+    Get paginated list of hypotheses for a research goal.
+
+    Query Parameters:
+    - sort_by: "elo" (default), "created", "title", or "diverse" (cluster-aware sampling)
+    - min_elo: Minimum Elo rating filter (default: 1200.0)
+    - page, page_size: Pagination parameters
+    """
     # Verify goal exists
     goal = await storage.get_research_goal(goal_id)
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
 
-    # Get all hypotheses for goal
-    all_hypotheses = await storage.get_hypotheses_by_goal(goal_id)
+    # Use diversity sampling if requested
+    if sort_by == "diverse":
+        from src.config import settings
+        if settings.diversity_sampling_enabled:
+            all_hypotheses = await storage.get_diverse_hypotheses(
+                goal_id=goal_id,
+                n=100,  # Get all for pagination
+                min_elo_rating=min_elo,
+                cluster_balance=True
+            )
+        else:
+            # Fallback to Elo if diversity sampling disabled
+            all_hypotheses = await storage.get_hypotheses_by_goal(goal_id)
+            all_hypotheses = [h for h in all_hypotheses if (h.elo_rating or 1200.0) >= min_elo]
+            all_hypotheses.sort(key=lambda h: h.elo_rating or 1200.0, reverse=True)
+    else:
+        # Original behavior
+        all_hypotheses = await storage.get_hypotheses_by_goal(goal_id)
 
-    # Sort
-    if sort_by == "elo":
-        all_hypotheses.sort(key=lambda h: h.elo_rating or 1200.0, reverse=True)
-    elif sort_by == "created":
-        all_hypotheses.sort(key=lambda h: h.created_at, reverse=True)
-    elif sort_by == "title":
-        all_hypotheses.sort(key=lambda h: h.title.lower())
+        # Apply minimum Elo filter
+        all_hypotheses = [h for h in all_hypotheses if (h.elo_rating or 1200.0) >= min_elo]
+
+        # Sort by specified field
+        if sort_by == "elo":
+            all_hypotheses.sort(key=lambda h: h.elo_rating or 1200.0, reverse=True)
+        elif sort_by == "created":
+            all_hypotheses.sort(key=lambda h: h.created_at, reverse=True)
+        elif sort_by == "title":
+            all_hypotheses.sort(key=lambda h: h.title.lower())
 
     # Paginate
     start = (page - 1) * page_size

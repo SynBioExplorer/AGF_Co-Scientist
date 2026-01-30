@@ -11,6 +11,11 @@ from src.literature.citation_extractor import CitationExtractor, ExtractedCitati
 from src.literature.citation_graph import CitationGraph, CitationNode, CitationEdge
 from src.literature.chunker import TextChunker
 from src.literature.repository import PrivateRepository, RepositoryDocument
+from src.literature.graph_expander import (
+    CitationGraphExpander,
+    ExpansionStrategy,
+    ExpansionResult
+)
 
 __all__ = [
     "PDFParser",
@@ -25,4 +30,7 @@ __all__ = [
     "TextChunker",
     "PrivateRepository",
     "RepositoryDocument",
+    "CitationGraphExpander",
+    "ExpansionStrategy",
+    "ExpansionResult",
 ]

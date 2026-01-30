@@ -333,6 +333,70 @@ class AsyncStorageAdapter:
                     results.append((edge.hypothesis_a_id, edge.similarity_score))
         return sorted(results, key=lambda x: x[1], reverse=True)
 
+    async def get_diverse_hypotheses(
+        self,
+        goal_id: str,
+        n: int = 10,
+        min_elo_rating: float = 1200.0,
+        cluster_balance: bool = True
+    ) -> List[Hypothesis]:
+        """
+        Get diverse hypotheses using cluster-aware sampling.
+
+        Strategy:
+        1. Fetch proximity graph for goal
+        2. Get all hypotheses for goal
+        3. For each cluster, select top-rated hypothesis
+        4. If fewer clusters than n, fill remainder with top Elo
+        5. Return exactly n hypotheses
+
+        Args:
+            goal_id: Research goal ID
+            n: Number of hypotheses to return (default: 10)
+            min_elo_rating: Minimum Elo threshold (default: 1200.0)
+            cluster_balance: If True, balance across clusters; else top from each
+
+        Returns:
+            List of n diverse hypotheses
+        """
+        # Get proximity graph
+        proximity_graph = await self.get_proximity_graph(goal_id)
+
+        # Get all hypotheses for goal
+        all_hypotheses = await self.get_hypotheses_by_goal(goal_id)
+
+        # Filter by minimum Elo
+        qualified = [h for h in all_hypotheses if (h.elo_rating or 1200.0) >= min_elo_rating]
+
+        # If no proximity graph, fallback to top Elo
+        if not proximity_graph or not proximity_graph.clusters:
+            return sorted(qualified, key=lambda h: h.elo_rating or 1200.0, reverse=True)[:n]
+
+        # Cluster-aware selection
+        selected = []
+        hyp_map = {h.id: h for h in qualified}
+
+        # For each cluster, pick top-rated hypothesis
+        for cluster in proximity_graph.clusters:
+            cluster_hyps = [hyp_map[hid] for hid in cluster.hypothesis_ids if hid in hyp_map]
+            if cluster_hyps:
+                top_in_cluster = max(cluster_hyps, key=lambda h: h.elo_rating or 1200.0)
+                selected.append(top_in_cluster)
+
+        # If we have more than n, take top n by Elo
+        if len(selected) > n:
+            selected = sorted(selected, key=lambda h: h.elo_rating or 1200.0, reverse=True)[:n]
+
+        # If we have fewer than n, fill with top remaining hypotheses
+        if len(selected) < n:
+            selected_ids = {h.id for h in selected}
+            remaining = [h for h in qualified if h.id not in selected_ids]
+            remaining_sorted = sorted(remaining, key=lambda h: h.elo_rating or 1200.0, reverse=True)
+            selected.extend(remaining_sorted[:n - len(selected)])
+
+        # Sort final result by Elo for consistency
+        return sorted(selected, key=lambda h: h.elo_rating or 1200.0, reverse=True)
+
     # =========================================================================
     # Meta-Review
     # =========================================================================
