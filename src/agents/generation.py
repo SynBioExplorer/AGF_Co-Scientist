@@ -1,6 +1,6 @@
 """Generation Agent - Create hypotheses via literature exploration or debate"""
 
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple, Optional
 from pydantic import ValidationError as PydanticValidationError
 import sys
 import json
@@ -18,6 +18,9 @@ from src.utils.web_search import get_search_client
 from src.utils.json_parser import parse_llm_json
 from src.config import settings
 from src.observability.tracing import trace_agent
+from src.tools.registry import get_tool_registry, initialize_tools
+from src.literature.citation_graph import CitationGraph
+from src.literature.graph_expander import CitationGraphExpander, ExpansionStrategy
 import json
 
 
@@ -31,19 +34,207 @@ class GenerationAgent(BaseAgent):
         )
         super().__init__(llm_client, "GenerationAgent")
 
+        # Initialize tool registry
+        self.tool_registry = initialize_tools()
+
+    async def _search_literature_tools(
+        self,
+        research_goal: ResearchGoal,
+        max_results: int = 10
+    ) -> Tuple[List[Dict[str, Any]], CitationGraph]:
+        """
+        Search literature using tool registry (PubMed + Semantic Scholar).
+
+        Args:
+            research_goal: Research goal for context
+            max_results: Maximum papers to retrieve
+
+        Returns:
+            Tuple of (search_results, citation_graph)
+        """
+        results = []
+        graph = CitationGraph()
+
+        # Try PubMed tool (biomedical)
+        pubmed_tool = self.tool_registry.get("pubmed")
+        if pubmed_tool:
+            try:
+                pubmed_result = await pubmed_tool.execute(
+                    research_goal.description,
+                    max_results=max_results // 2
+                )
+                if pubmed_result.success:
+                    results.extend(pubmed_result.data)
+                    self.logger.info(
+                        "PubMed search successful",
+                        num_results=len(pubmed_result.data)
+                    )
+            except Exception as e:
+                self.logger.warning("PubMed search failed", error=str(e))
+
+        # Try Semantic Scholar tool (cross-disciplinary)
+        semantic_tool = self.tool_registry.get("semantic_scholar")
+        if semantic_tool:
+            try:
+                semantic_result = await semantic_tool.execute(
+                    research_goal.description,
+                    max_results=max_results // 2
+                )
+                if semantic_result.success:
+                    results.extend(semantic_result.data)
+                    self.logger.info(
+                        "Semantic Scholar search successful",
+                        num_results=len(semantic_result.data)
+                    )
+            except Exception as e:
+                self.logger.warning("Semantic Scholar search failed", error=str(e))
+
+        return results, graph
+
+    async def _expand_citation_graph(
+        self,
+        search_results: List[Dict[str, Any]],
+        graph: CitationGraph,
+        max_depth: int = 1
+    ) -> CitationGraph:
+        """
+        Expand citation graph from search results.
+
+        Args:
+            search_results: Initial papers from search
+            graph: Citation graph to expand
+            max_depth: Depth of citation expansion
+
+        Returns:
+            Expanded CitationGraph
+        """
+        # Get Semantic Scholar tool for citation expansion
+        semantic_tool = self.tool_registry.get("semantic_scholar")
+        if not semantic_tool or not search_results:
+            return graph
+
+        # Create expander
+        expander = CitationGraphExpander(
+            graph=graph,
+            tools={"semantic_scholar": semantic_tool}
+        )
+
+        try:
+            # Expand from top results (backward strategy to find foundational work)
+            await expander.expand_from_results(
+                search_results,
+                depth=max_depth,
+                strategy=ExpansionStrategy.BACKWARD,
+                limit_per_direction=10
+            )
+
+            self.logger.info(
+                "Citation graph expanded",
+                total_papers=len(graph.nodes),
+                total_edges=len(graph.edges)
+            )
+        except Exception as e:
+            self.logger.warning("Citation expansion failed", error=str(e))
+
+        return graph
+
+    def _format_citation_graph_context(
+        self,
+        graph: CitationGraph,
+        max_papers: int = 20
+    ) -> str:
+        """
+        Format citation graph as context for LLM.
+
+        Args:
+            graph: Citation graph to format
+            max_papers: Maximum papers to include
+
+        Returns:
+            Formatted string with paper summaries
+        """
+        if not graph.nodes:
+            return ""
+
+        # Rank papers by citation count
+        papers = sorted(
+            graph.nodes.values(),
+            key=lambda p: p.citation_count,
+            reverse=True
+        )[:max_papers]
+
+        context_parts = ["**Citation Network Analysis:**\n"]
+
+        for i, paper in enumerate(papers):
+            # Get citations this paper makes
+            citations = graph.get_citations(paper.id)
+            cited_by = graph.get_cited_by(paper.id)
+
+            context_parts.append(
+                f"\n**Paper {i+1}:** {paper.title}\n"
+                f"Authors: {', '.join(paper.authors[:3])}{'...' if len(paper.authors) > 3 else ''}\n"
+                f"Year: {paper.year or 'N/A'}\n"
+                f"DOI: {paper.doi or 'N/A'}\n"
+                f"Citations: {paper.citation_count} | References: {paper.reference_count}\n"
+                f"Graph connections: Cites {len(citations)} papers, Cited by {len(cited_by)} papers\n"
+            )
+
+        return "\n".join(context_parts)
+
+    def _search_tavily_fallback(self, research_goal: ResearchGoal) -> str:
+        """
+        Fallback to Tavily web search if literature tools fail.
+
+        Args:
+            research_goal: Research goal for search query
+
+        Returns:
+            Formatted search results string
+        """
+        if not settings.tavily_api_key:
+            return ""
+
+        try:
+            search_client = get_search_client()
+            results = search_client.search_scientific_literature(
+                query=research_goal.description,
+                max_results=5
+            )
+
+            articles_with_reasoning = "\n\n".join([
+                f"**Article {i+1}:** {r['title']}\n"
+                f"URL: {r['url']}\n"
+                f"Content: {r['content'][:300]}..."
+                for i, r in enumerate(results) if r['url']  # Skip AI summary
+            ])
+
+            self.logger.info(
+                "Tavily fallback search completed",
+                num_articles=len(results)
+            )
+
+            return articles_with_reasoning
+
+        except Exception as e:
+            self.logger.warning(
+                "Tavily fallback failed",
+                error=str(e)
+            )
+            return ""
+
     @trace_agent("GenerationAgent")
-    def execute(
+    async def execute(
         self,
         research_goal: ResearchGoal,
         method: GenerationMethod = GenerationMethod.LITERATURE_EXPLORATION,
-        use_web_search: bool = False
+        use_literature_expansion: bool = True
     ) -> Hypothesis:
         """Generate a hypothesis
 
         Args:
             research_goal: Research goal to address
             method: Generation method (literature or debate)
-            use_web_search: Whether to perform web search for literature context
+            use_literature_expansion: Whether to use literature tools + citation expansion
 
         Returns:
             Generated Hypothesis
@@ -53,36 +244,46 @@ class GenerationAgent(BaseAgent):
             task="hypothesis_generation",
             goal=research_goal.description[:100],
             method=method.value,
-            web_search=use_web_search
+            literature_expansion=use_literature_expansion
         )
 
-        # Optionally search for literature
-        articles_with_reasoning = ""
-        if use_web_search and settings.tavily_api_key:
+        # Literature context
+        literature_context = ""
+        citation_graph = CitationGraph()  # Initialize empty graph
+
+        if use_literature_expansion:
             try:
-                search_client = get_search_client()
-                results = search_client.search_scientific_literature(
-                    query=research_goal.description,
-                    max_results=5
+                # Try structured literature tools first
+                search_results, citation_graph = await self._search_literature_tools(
+                    research_goal,
+                    max_results=10
                 )
 
-                articles_with_reasoning = "\n\n".join([
-                    f"**Article {i+1}:** {r['title']}\n"
-                    f"URL: {r['url']}\n"
-                    f"Content: {r['content'][:300]}..."
-                    for i, r in enumerate(results) if r['url']  # Skip AI summary
-                ])
+                if search_results:
+                    # Expand citation graph (depth=1)
+                    citation_graph = await self._expand_citation_graph(
+                        search_results,
+                        citation_graph,
+                        max_depth=1
+                    )
 
-                self.logger.info(
-                    "Literature search completed",
-                    num_articles=len(results)
-                )
+                    # Format as context
+                    literature_context = self._format_citation_graph_context(
+                        citation_graph,
+                        max_papers=20
+                    )
+
+                # Fallback to Tavily if no results
+                if not literature_context:
+                    self.logger.info("No results from literature tools, trying Tavily fallback")
+                    literature_context = self._search_tavily_fallback(research_goal)
 
             except Exception as e:
                 self.logger.warning(
-                    "Literature search failed, proceeding without",
+                    "Literature expansion failed, trying Tavily fallback",
                     error=str(e)
                 )
+                literature_context = self._search_tavily_fallback(research_goal)
 
         # Format prompt
         method_str = "literature" if method == GenerationMethod.LITERATURE_EXPLORATION else "debate"
@@ -90,7 +291,7 @@ class GenerationAgent(BaseAgent):
             goal=research_goal.description,
             preferences=research_goal.preferences,
             method=method_str,
-            articles_with_reasoning=articles_with_reasoning
+            articles_with_reasoning=literature_context
         )
 
         # Add structured output instruction
@@ -138,13 +339,79 @@ Respond with ONLY the JSON object, no additional text."""
                 elo_rating=1200.0  # Initial Elo per Google paper (page 11)
             )
 
+            # Validate and enrich citations if literature expansion was used
+            if use_literature_expansion:
+                hypothesis = await self._validate_citations(hypothesis, citation_graph)
+
             self.logger.info(
                 "Hypothesis generated",
                 hypothesis_id=hypothesis.id,
-                title=hypothesis.title
+                title=hypothesis.title,
+                num_citations=len(hypothesis.literature_citations)
             )
 
             return hypothesis
 
         except (json.JSONDecodeError, PydanticValidationError, KeyError) as e:
             raise CoScientistError(f"Failed to parse LLM response: {e}\nResponse: {response[:500]}")
+
+    async def _validate_citations(
+        self,
+        hypothesis: Hypothesis,
+        citation_graph: CitationGraph
+    ) -> Hypothesis:
+        """
+        Validate and enrich hypothesis citations.
+
+        Args:
+            hypothesis: Generated hypothesis
+            citation_graph: Citation graph from expansion
+
+        Returns:
+            Hypothesis with validated citations
+        """
+        if not hypothesis.literature_citations:
+            return hypothesis
+
+        validated_citations = []
+        semantic_tool = self.tool_registry.get("semantic_scholar")
+
+        for citation in hypothesis.literature_citations:
+            # Check if DOI exists in citation graph
+            doi_in_graph = False
+            if citation.doi:
+                for node in citation_graph.nodes.values():
+                    if node.doi == citation.doi:
+                        doi_in_graph = True
+                        # Enrich with graph data
+                        citation.title = citation.title or node.title
+                        break
+
+            # If not in graph and we have Semantic Scholar, fetch it
+            if not doi_in_graph and citation.doi and semantic_tool:
+                try:
+                    paper = await semantic_tool.get_paper(f"DOI:{citation.doi}")
+                    if paper:
+                        # Add to graph for future use
+                        citation_graph.add_paper(
+                            paper_id=paper.paper_id,
+                            title=paper.title,
+                            authors=paper.authors,
+                            year=paper.year,
+                            doi=paper.doi
+                        )
+                        self.logger.info(
+                            "Citation validated and added to graph",
+                            doi=citation.doi
+                        )
+                except Exception as e:
+                    self.logger.warning(
+                        "Could not validate citation",
+                        doi=citation.doi,
+                        error=str(e)
+                    )
+
+            validated_citations.append(citation)
+
+        hypothesis.literature_citations = validated_citations
+        return hypothesis

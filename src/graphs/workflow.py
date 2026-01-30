@@ -4,6 +4,7 @@ from typing import Dict, Any
 from langgraph.graph import StateGraph, END
 import sys
 from pathlib import Path
+import asyncio
 sys.path.append(str(Path(__file__).parent.parent.parent / "03_architecture"))
 from schemas import ResearchGoal, ReviewType, EvolutionStrategy
 
@@ -17,6 +18,7 @@ from src.agents.meta_review import MetaReviewAgent
 from src.tournament.elo import TournamentRanker
 from src.storage.memory import storage
 from src.utils.strategy_selector import select_evolution_strategy
+from src.config import settings
 import structlog
 
 logger = structlog.get_logger()
@@ -35,7 +37,7 @@ class CoScientistWorkflow:
         self.ranker = TournamentRanker()
         self.enable_evolution = enable_evolution
 
-    def generate_node(self, state: WorkflowState) -> Dict[str, Any]:
+    async def generate_node(self, state: WorkflowState) -> Dict[str, Any]:
         """Generate new hypotheses"""
         logger.info("Node: Generate", iteration=state["iteration"])
 
@@ -44,8 +46,9 @@ class CoScientistWorkflow:
         new_hypotheses = []
 
         for i in range(num_hypotheses):
-            hypothesis = self.generation_agent.execute(
-                research_goal=state["research_goal"]
+            hypothesis = await self.generation_agent.execute(
+                research_goal=state["research_goal"],
+                use_literature_expansion=True  # Enable citation expansion
             )
             storage.add_hypothesis(hypothesis)
             new_hypotheses.append(hypothesis)
@@ -54,7 +57,8 @@ class CoScientistWorkflow:
                 "Hypothesis generated",
                 hypothesis_id=hypothesis.id,
                 title=hypothesis.title,
-                elo=hypothesis.elo_rating
+                elo=hypothesis.elo_rating,
+                num_citations=len(hypothesis.literature_citations)
             )
 
         return {"hypotheses": new_hypotheses}

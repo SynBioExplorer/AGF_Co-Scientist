@@ -388,6 +388,125 @@ class RedisCache:
             logger.error("Cache clear failed", error=str(e))
 
     # =========================================================================
+    # Citation Graph Caching (Phase 6 Week 4)
+    # =========================================================================
+
+    # Citation graph cache TTLs
+    CITATION_GRAPH_TTL = 86400  # 24 hours
+    PAPER_METADATA_TTL = 604800  # 7 days
+
+    async def get_citation_graph(
+        self,
+        cache_key: str
+    ) -> Optional["CitationGraph"]:
+        """Get cached citation graph.
+
+        Args:
+            cache_key: Cache key (format: "goal:{goal_id}:query_hash")
+
+        Returns:
+            CitationGraph if cached, None otherwise
+        """
+        key = self._key("citation_graph", cache_key)
+        try:
+            cached = await self._client.get(key)
+            if cached:
+                data = json.loads(cached)
+                graph = self._dict_to_graph(data)
+                logger.debug("Citation graph cache hit", key=key)
+                return graph
+            logger.debug("Citation graph cache miss", key=key)
+            return None
+        except Exception as e:
+            logger.warning("Citation graph cache get failed", key=key, error=str(e))
+            return None
+
+    async def set_citation_graph(
+        self,
+        cache_key: str,
+        graph: "CitationGraph",
+        ttl: Optional[int] = None
+    ) -> None:
+        """Cache citation graph.
+
+        Args:
+            cache_key: Cache key (format: "goal:{goal_id}:query_hash")
+            graph: CitationGraph to cache
+            ttl: Time-to-live in seconds (default: CITATION_GRAPH_TTL)
+        """
+        key = self._key("citation_graph", cache_key)
+        ttl = ttl or self.CITATION_GRAPH_TTL
+        try:
+            data = self._graph_to_dict(graph)
+            await self._client.setex(key, ttl, json.dumps(data))
+            logger.debug("Citation graph cached", key=key, ttl=ttl, nodes=len(graph.nodes))
+        except Exception as e:
+            logger.warning("Citation graph cache set failed", key=key, error=str(e))
+
+    async def get_paper_metadata(
+        self,
+        paper_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get cached paper metadata.
+
+        Args:
+            paper_id: Canonical paper ID
+
+        Returns:
+            Paper metadata dict if cached, None otherwise
+        """
+        key = self._key("paper", paper_id)
+        try:
+            cached = await self._client.get(key)
+            if cached:
+                return json.loads(cached)
+            return None
+        except Exception as e:
+            logger.warning("Paper metadata cache get failed", key=key, error=str(e))
+            return None
+
+    async def set_paper_metadata(
+        self,
+        paper_id: str,
+        metadata: Dict[str, Any],
+        ttl: Optional[int] = None
+    ) -> None:
+        """Cache paper metadata.
+
+        Args:
+            paper_id: Canonical paper ID
+            metadata: Paper metadata dict
+            ttl: Time-to-live in seconds (default: PAPER_METADATA_TTL)
+        """
+        key = self._key("paper", paper_id)
+        ttl = ttl or self.PAPER_METADATA_TTL
+        try:
+            await self._client.setex(key, ttl, json.dumps(metadata))
+            logger.debug("Paper metadata cached", key=key, ttl=ttl)
+        except Exception as e:
+            logger.warning("Paper metadata cache set failed", key=key, error=str(e))
+
+    async def invalidate_citation_graphs(
+        self,
+        goal_id: str
+    ) -> None:
+        """Invalidate all citation graphs for a research goal.
+
+        Args:
+            goal_id: Research goal ID
+        """
+        pattern = self._key("citation_graph", f"goal:{goal_id}:*")
+        try:
+            keys = []
+            async for key in self._client.scan_iter(match=pattern):
+                keys.append(key)
+            if keys:
+                await self._client.delete(*keys)
+                logger.debug("Citation graphs invalidated", pattern=pattern, count=len(keys))
+        except Exception as e:
+            logger.warning("Citation graph invalidation failed", pattern=pattern, error=str(e))
+
+    # =========================================================================
     # Serialization Helpers
     # =========================================================================
 
@@ -434,6 +553,64 @@ class RedisCache:
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
         )
+
+    def _graph_to_dict(self, graph: "CitationGraph") -> Dict[str, Any]:
+        """Serialize citation graph to JSON-compatible dict.
+
+        Args:
+            graph: CitationGraph instance
+
+        Returns:
+            Dict with nodes, edges, and metadata
+        """
+        # Import here to avoid circular dependency
+        from src.literature.citation_graph import CitationGraph, CitationNode, CitationEdge
+
+        return {
+            "nodes": [node.model_dump() for node in graph.nodes.values()],
+            "edges": [
+                {
+                    "source_id": edge.source_id,
+                    "target_id": edge.target_id
+                }
+                for edge in graph.edges
+            ],
+            "metadata": getattr(graph, 'metadata', {})  # Optional metadata
+        }
+
+    def _dict_to_graph(self, data: Dict[str, Any]) -> "CitationGraph":
+        """Deserialize citation graph from dict.
+
+        Args:
+            data: Dict with nodes, edges, metadata
+
+        Returns:
+            CitationGraph instance
+        """
+        # Import here to avoid circular dependency
+        from src.literature.citation_graph import CitationGraph, CitationNode
+
+        graph = CitationGraph()
+
+        # Restore nodes
+        for node_data in data.get("nodes", []):
+            node = CitationNode(**node_data)
+            graph.nodes[node.id] = node
+
+        # Restore edges
+        for edge_data in data.get("edges", []):
+            source_id = edge_data["source_id"]
+            target_id = edge_data["target_id"]
+            # Only add edge if both nodes exist
+            if source_id in graph.nodes and target_id in graph.nodes:
+                graph.add_citation(source_id, target_id)
+
+        # Restore metadata (optional - store as attribute if present)
+        metadata = data.get("metadata", {})
+        if metadata:
+            graph.metadata = metadata
+
+        return graph
 
 
 class CachedStorage:

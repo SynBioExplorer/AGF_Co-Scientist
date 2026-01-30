@@ -95,6 +95,14 @@ class Settings(BaseSettings):
     architecture_dir: Path = project_root / "03_architecture"
     data_dir: Path = project_root / "data"
 
+    # Phase 6 Week 4: Multi-Source Citation Merging
+    citation_source_priority: List[str] = ["local", "pubmed", "semantic_scholar"]
+    citation_graph_cache_ttl: int = 86400  # 24 hours
+    paper_metadata_cache_ttl: int = 604800  # 7 days
+    private_repository_path: str | None = None  # Path to local PDF collection
+    enable_parallel_expansion: bool = True  # Parallel citation graph expansion
+    max_parallel_expansions: int = 5  # Concurrent expansion tasks
+
     class Config:
         env_file = "03_architecture/.env"
         extra = "ignore"
