@@ -1,8 +1,10 @@
 # Phase 6: Limitations Extraction (Negative Result Injection) - Implementation Summary
 
-**Status**: 📋 **PLANNED**
+**Status**: ✅ **IMPLEMENTED**
 
 **Date**: February 2, 2026
+
+**Implementation Date**: February 2, 2026
 
 **Alignment**: Addresses publication bias - Surface known failures and boundaries
 
@@ -19,6 +21,29 @@ Implement extraction of **limitations**, **caveats**, and **negative results** f
 - **"Discussion"** section - Caveats and alternative explanations
 - **"Future Work"** section - What needs fixing before progress
 - **"Conclusion"** section - Boundaries of current knowledge
+
+---
+
+## Implementation Status
+
+**Files Created**:
+- [src/literature/limitations_extractor.py](../../src/literature/limitations_extractor.py) - LimitationsExtractor with section parsing
+- [05_tests/phase6_limitations_test.py](../../05_tests/phase6_limitations_test.py) - 17 tests passing
+- Integration tests included in phase6_generation_integration_test.py and phase6_reflection_integration_test.py
+
+**Files Modified**:
+- [src/agents/generation.py](../../src/agents/generation.py) - Extract and include limitations in context
+- [src/agents/reflection.py](../../src/agents/reflection.py) - Check hypotheses against known limitations
+- [src/literature/citation_graph.py](../../src/literature/citation_graph.py) - Added known_limitations and limitations_confidence fields
+- [src/config.py](../../src/config.py) - Added Phase 6 configuration flags
+
+**Test Results**: 17 unit tests passing
+
+**Key Features**:
+- Section parsing for "Limitations", "Discussion", "Future Work"
+- Negative phrase detection (did not, failed to, unable to)
+- Confidence scoring based on extraction quality
+- Context formatting with [KNOWN LIMITATIONS] tags
 
 ---
 
@@ -324,12 +349,12 @@ for paper in papers:
 
 ### Verification Steps
 
-- [ ] Parse paper with clear "Limitations" section
-- [ ] Extract limitation sentences containing negative phrases
-- [ ] Verify confidence > 0.5 for papers with explicit limitations
-- [ ] Check that limitations appear in Generation agent context
-- [ ] Verify: Generated hypotheses don't re-propose known failures
-- [ ] Test: Reflection agent flags hypotheses ignoring known limitations
+- [x] Parse paper with clear "Limitations" section
+- [x] Extract limitation sentences containing negative phrases
+- [x] Verify confidence > 0.5 for papers with explicit limitations
+- [x] Check that limitations appear in Generation agent context
+- [x] Verify: Generated hypotheses don't re-propose known failures
+- [x] Test: Reflection agent flags hypotheses ignoring known limitations
 
 ### Real-World Test Case: Known Experimental Failure
 
@@ -338,10 +363,10 @@ for paper in papers:
 **Test Hypothesis**: "Use Protocol X to amplify Gene Y"
 
 **Expected Behavior**:
-- [ ] Limitations extractor finds "Protocol X failed" statement
-- [ ] Generation agent includes limitation in context
-- [ ] If hypothesis proposed anyway, Reflection agent flags as "ignores known limitation"
-- [ ] Novelty score reduced due to re-proposing known failure
+- [x] Limitations extractor finds "Protocol X failed" statement
+- [x] Generation agent includes limitation in context
+- [x] If hypothesis proposed anyway, Reflection agent flags as "ignores known limitation"
+- [x] Novelty score reduced due to re-proposing known failure
 
 ---
 
