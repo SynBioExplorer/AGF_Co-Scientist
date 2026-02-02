@@ -24,6 +24,9 @@ from src.literature.citation_graph import CitationGraph
 from src.literature.graph_expander import CitationGraphExpander, ExpansionStrategy
 from src.literature.source_merger import CitationSourceMerger
 from src.storage.cache import RedisCache
+# Phase 6: Evidence quality enhancement imports
+from src.literature.quality_scorer import PaperQualityScorer
+from src.literature.limitations_extractor import LimitationsExtractor
 import json
 import hashlib
 
@@ -46,6 +49,97 @@ class GenerationAgent(BaseAgent):
             source_priority=settings.citation_source_priority
         )
         self.cache = cache  # Optional Redis cache
+
+        # Phase 6: Evidence quality enhancement
+        self.quality_scorer = PaperQualityScorer(
+            citation_weight=settings.quality_citation_weight,
+            recency_weight=settings.quality_recency_weight,
+            journal_weight=settings.quality_journal_weight,
+            min_threshold=settings.quality_min_threshold,
+            recency_halflife_years=settings.quality_recency_halflife_years
+        )
+        self.limitations_extractor = LimitationsExtractor(
+            min_confidence=settings.limitations_min_confidence
+        )
+
+    def _enrich_papers_with_quality(
+        self,
+        papers: List[Any]
+    ) -> List[Any]:
+        """
+        Score papers and filter by quality threshold.
+
+        Phase 6 integration: Uses PaperQualityScorer to rank and filter papers
+        before including them in LLM context.
+
+        Args:
+            papers: List of CitationNode objects from search
+
+        Returns:
+            Filtered and ranked list of papers (highest quality first)
+        """
+        if not settings.enable_quality_scoring or not papers:
+            return papers
+
+        # Score each paper
+        for paper in papers:
+            paper.quality_score = self.quality_scorer.compute_quality_score(paper)
+
+        # Filter by threshold
+        filtered = self.quality_scorer.filter_by_quality(papers)
+
+        # Rank by quality (highest first)
+        ranked = self.quality_scorer.rank_papers_by_quality(filtered, top_k=len(filtered))
+
+        self.logger.info(
+            "Papers enriched with quality scores",
+            total=len(papers),
+            passed_filter=len(ranked),
+            threshold=settings.quality_min_threshold
+        )
+
+        return ranked
+
+    def _extract_paper_limitations(
+        self,
+        papers: List[Any]
+    ) -> str:
+        """
+        Extract limitations from papers for LLM context.
+
+        Phase 6 integration: Uses LimitationsExtractor to surface caveats
+        and negative results from literature.
+
+        Args:
+            papers: List of CitationNode objects
+
+        Returns:
+            Formatted limitations string or empty if disabled
+        """
+        if not settings.enable_limitations_extraction or not papers:
+            return ""
+
+        # Batch extract from abstracts (full text not available in this pipeline)
+        limitations_data = self.limitations_extractor.batch_extract(papers)
+
+        # Format for context
+        context = self.limitations_extractor.format_batch_for_context(
+            papers,
+            limitations_data,
+            min_confidence=settings.limitations_min_confidence
+        )
+
+        if context:
+            papers_with_limitations = sum(
+                1 for d in limitations_data.values() if d.get("limitations")
+            )
+            self.logger.info(
+                "Limitations extracted",
+                papers_with_limitations=papers_with_limitations,
+                total_papers=len(papers)
+            )
+
+        return context
 
     async def _search_literature_tools(
         self,
@@ -248,32 +342,68 @@ class GenerationAgent(BaseAgent):
         """
         Format citation graph as context for LLM.
 
+        Phase 6 enhancement: Includes quality labels and skips retracted papers.
+
         Args:
             graph: Citation graph to format
             max_papers: Maximum papers to include
 
         Returns:
-            Formatted string with paper summaries
+            Formatted string with paper summaries and quality labels
         """
         if not graph.nodes:
             return ""
 
-        # Rank papers by citation count
-        papers = sorted(
-            graph.nodes.values(),
-            key=lambda p: p.citation_count,
-            reverse=True
-        )[:max_papers]
+        # Get papers, optionally sorted by quality score if available
+        papers_list = list(graph.nodes.values())
+
+        # Phase 6: Filter out retracted papers
+        non_retracted = [
+            p for p in papers_list
+            if not getattr(p, 'is_retracted', False)
+        ]
+
+        if len(non_retracted) < len(papers_list):
+            retracted_count = len(papers_list) - len(non_retracted)
+            self.logger.warning(
+                "Retracted papers excluded from context",
+                retracted_count=retracted_count
+            )
+
+        # Rank by quality score if available, otherwise by citation count
+        if any(getattr(p, 'quality_score', None) is not None for p in non_retracted):
+            papers = sorted(
+                non_retracted,
+                key=lambda p: getattr(p, 'quality_score', 0) or 0,
+                reverse=True
+            )[:max_papers]
+        else:
+            papers = sorted(
+                non_retracted,
+                key=lambda p: p.citation_count or 0,
+                reverse=True
+            )[:max_papers]
 
         context_parts = ["**Citation Network Analysis:**\n"]
 
-        for i, paper in enumerate(papers):
+        paper_num = 0
+        for paper in papers:
+            paper_num += 1
+
+            # Phase 6: Get quality label
+            quality_score = getattr(paper, 'quality_score', None)
+            if quality_score is not None:
+                quality_label = self.quality_scorer.get_quality_label(quality_score)
+            else:
+                quality_label = "UNSCORED"
+
             # Get citations this paper makes
             citations = graph.get_citations(paper.id)
             cited_by = graph.get_cited_by(paper.id)
 
             context_parts.append(
-                f"\n**Paper {i+1}:** {paper.title}\n"
+                f"\n**Paper {paper_num}:** {paper.title}\n"
+                f"[QUALITY: {quality_label}]\n"
                 f"Authors: {', '.join(paper.authors[:3])}{'...' if len(paper.authors) > 3 else ''}\n"
                 f"Year: {paper.year or 'N/A'}\n"
                 f"DOI: {paper.doi or 'N/A'}\n"
@@ -351,6 +481,7 @@ class GenerationAgent(BaseAgent):
 
         # Literature context
         literature_context = ""
+        limitations_context = ""
         citation_graph = CitationGraph()  # Initialize empty graph
 
         if use_literature_expansion:
@@ -370,11 +501,22 @@ class GenerationAgent(BaseAgent):
                         research_goal=research_goal
                     )
 
-                    # Format as context
+                    # Phase 6: Enrich papers with quality scores
+                    graph_papers = list(citation_graph.nodes.values())
+                    quality_papers = self._enrich_papers_with_quality(graph_papers)
+
+                    # Phase 6: Extract limitations from papers
+                    limitations_context = self._extract_paper_limitations(quality_papers)
+
+                    # Format as context (now includes quality labels)
                     literature_context = self._format_citation_graph_context(
                         citation_graph,
                         max_papers=20
                     )
+
+                    # Append limitations if available
+                    if limitations_context:
+                        literature_context = f"{literature_context}\n\n{limitations_context}"
 
                 # Fallback to Tavily if no results
                 if not literature_context:
@@ -466,6 +608,8 @@ Respond with ONLY the JSON object, no additional text."""
         """
         Validate and enrich hypothesis citations.
 
+        Phase 6 enhancement: Also checks retraction status.
+
         Args:
             hypothesis: Generated hypothesis
             citation_graph: Citation graph from expansion
@@ -482,12 +626,23 @@ Respond with ONLY the JSON object, no additional text."""
         for citation in hypothesis.literature_citations:
             # Check if DOI exists in citation graph
             doi_in_graph = False
+            is_retracted = False
+
             if citation.doi:
                 for node in citation_graph.nodes.values():
                     if node.doi == citation.doi:
                         doi_in_graph = True
                         # Enrich with graph data
                         citation.title = citation.title or node.title
+
+                        # Phase 6: Check retraction status
+                        if getattr(node, 'is_retracted', False):
+                            is_retracted = True
+                            self.logger.warning(
+                                "Citation references retracted paper",
+                                citation_title=citation.title,
+                                doi=citation.doi
+                            )
                         break
 
             # If not in graph and we have Semantic Scholar, fetch it
@@ -514,7 +669,14 @@ Respond with ONLY the JSON object, no additional text."""
                         error=str(e)
                     )
 
-            validated_citations.append(citation)
+            # Only include non-retracted citations
+            if not is_retracted:
+                validated_citations.append(citation)
+            else:
+                self.logger.info(
+                    "Excluding retracted citation",
+                    title=citation.title
+                )
 
         hypothesis.literature_citations = validated_citations
         return hypothesis
