@@ -1,332 +1,282 @@
-request: "Implement Phase 5D Frontend Dashboard - React frontend with chat interface, settings panel, hypothesis browser, visualizations, and literature page"
-created_at: "2025-01-29T14:00:00Z"
+# Phase 6b: Agent Integration of Evidence Quality Enhancement Features
+# Generated: 2026-02-02
+# Commit: 31f3178
+# Previous: Phase 6 features implemented (quality_scorer.py, refutation_search.py, limitations_extractor.py)
+# This plan: Integrate these features into GenerationAgent and ReflectionAgent
 
-# Phase 5D Frontend Dashboard Decomposition
-# ==========================================
-#
-# The frontend is decomposed into 6 parallel tasks with non-overlapping file ownership.
-# Each task produces a self-contained feature that can be verified independently.
-#
-# Dependency Graph:
-#   task-a (Foundation) ─┬─> task-b (Settings)
-#                        ├─> task-c (Layout)
-#                        ├─> task-d (Chat)
-#                        ├─> task-e (Hypotheses)
-#                        └─> task-f (Literature)
-#
-# task-a must complete first as it sets up the project infrastructure.
-# tasks b-f can run in parallel after task-a completes.
+request: |
+  Integrate Phase 6 evidence quality features (PaperQualityScorer, RefutationSearchTool,
+  LimitationsExtractor) into GenerationAgent and ReflectionAgent.
+
+  GenerationAgent should:
+  - Score and rank papers before including in context
+  - Include quality labels (HIGH/MEDIUM/LOW) in LLM prompts
+  - Extract and include limitations from papers in context
+  - Filter out low-quality/retracted sources
+
+  ReflectionAgent should:
+  - Search for contradictory evidence for each hypothesis
+  - Check retraction status of supporting citations
+  - Evaluate hypotheses against known limitations from literature
+  - Include counter-evidence in reflection context
+
+created_at: "2026-02-02T12:30:00Z"
+contract_version: "31f3178"
+project_root: "/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist"
 
 tasks:
-  # ==========================================================================
-  # TASK A: Foundation & Infrastructure
-  # ==========================================================================
-  - id: task-a
+  # Wave 1: Create test files first (TDD approach) - runs in parallel
+  - id: task-generation-tests
     description: |
-      Set up the React frontend project with Vite, TypeScript, and Tailwind CSS.
-      Create the API service layer, TypeScript types, and core hooks.
-      This establishes the foundation all other tasks depend on.
+      Create integration tests for GenerationAgent Phase 6 features.
+
+      Tests should verify:
+      1. Quality scoring is applied to papers in _search_literature_tools()
+      2. Low-quality papers are filtered out (min_score threshold)
+      3. Quality labels (HIGH/MEDIUM/LOW) appear in LLM context
+      4. Limitations are extracted and included in prompt context
+      5. Retracted papers are excluded from final context
+      6. End-to-end hypothesis generation uses quality-filtered sources
+
+      Test file: 05_tests/phase6_generation_integration_test.py
+
     files_write:
-      # Project setup
-      - "frontend/package.json"
-      - "frontend/vite.config.ts"
-      - "frontend/tsconfig.json"
-      - "frontend/tsconfig.node.json"
-      - "frontend/tailwind.config.js"
-      - "frontend/postcss.config.js"
-      - "frontend/index.html"
-      - "frontend/.env"
-      - "frontend/.env.example"
-      # Source entry
-      - "frontend/src/main.tsx"
-      - "frontend/src/index.css"
-      # Types
-      - "frontend/src/types/index.ts"
-      - "frontend/src/types/api.ts"
-      # API Service
-      - "frontend/src/services/api.ts"
-      # Core hooks
-      - "frontend/src/hooks/useApi.ts"
-      - "frontend/src/hooks/usePolling.ts"
-      # Common components
-      - "frontend/src/components/common/Button.tsx"
-      - "frontend/src/components/common/Card.tsx"
-      - "frontend/src/components/common/Loading.tsx"
-      - "frontend/src/components/common/Select.tsx"
-      - "frontend/src/components/common/Slider.tsx"
-      - "frontend/src/components/common/Input.tsx"
-      - "frontend/src/components/common/index.ts"
-      # Public assets
-      - "frontend/public/favicon.ico"
+      - "05_tests/phase6_generation_integration_test.py"
+
     files_read:
-      - "src/api/main.py"
-      - "src/api/models.py"
-      - "03_architecture/schemas.py"
-      - "03_architecture/Phase5/PHASE5D_FRONTEND_DASHBOARD.md"
+      - "05_tests/phase6_quality_scoring_test.py"
+      - "05_tests/phase6_limitations_test.py"
+      - "05_tests/phase6_integration_test.py"
+      - "src/agents/generation.py"
+      - "src/literature/quality_scorer.py"
+      - "src/literature/limitations_extractor.py"
+      - "contracts/evidence_quality_interface.py"
+
     resources_write:
-      - "config:vite"
-      - "config:tailwind"
-      - "config:typescript"
-      - "service:api"
+      - "test:phase6_generation_integration"
+
     depends_on: []
-    verification:
-      - command: "cd /Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian\\ Genome\\ Foundry\\ -\\ AWS\\ cloud\\ infrastructure/12_AI_Co-scientist/Google\\ co-scientist/frontend && npm install && npm run build 2>&1 | head -50"
-        type: build
-        required: true
-      - command: "cd /Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian\\ Genome\\ Foundry\\ -\\ AWS\\ cloud\\ infrastructure/12_AI_Co-scientist/Google\\ co-scientist/frontend && npx tsc --noEmit 2>&1 | head -50"
-        type: typecheck
-        required: true
-    context_files:
-      - path: "src/api/main.py"
-        reason: "API endpoints to call from frontend"
-      - path: "src/api/models.py"
-        reason: "Response models for TypeScript types"
-      - path: "03_architecture/schemas.py"
-        reason: "Core data schemas for TypeScript types"
 
-  # ==========================================================================
-  # TASK B: Settings Panel & Store
-  # ==========================================================================
-  - id: task-b
+    verification:
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -m py_compile 05_tests/phase6_generation_integration_test.py"
+        type: syntax
+        required: true
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -m pytest 05_tests/phase6_generation_integration_test.py --collect-only 2>/dev/null || echo 'Collection check'"
+        type: test_discovery
+        required: false
+
+    patch_intents: []
+
+  - id: task-reflection-tests
     description: |
-      Implement the Settings panel with model selector, API key inputs,
-      parameter sliders, and feature toggles. Uses Zustand for state management
-      with localStorage persistence.
-    files_write:
-      # Store
-      - "frontend/src/store/settingsStore.ts"
-      # Settings components
-      - "frontend/src/components/settings/SettingsPanel.tsx"
-      - "frontend/src/components/settings/ModelSelector.tsx"
-      - "frontend/src/components/settings/ApiKeyInput.tsx"
-      - "frontend/src/components/settings/ParameterSliders.tsx"
-      - "frontend/src/components/settings/FeatureToggles.tsx"
-      - "frontend/src/components/settings/index.ts"
-      # Settings page
-      - "frontend/src/pages/SettingsPage.tsx"
-      # Settings hook
-      - "frontend/src/hooks/useSettings.ts"
-    files_read:
-      - "frontend/src/types/index.ts"
-      - "frontend/src/services/api.ts"
-      - "frontend/src/components/common/index.ts"
-      - "03_architecture/Phase5/PHASE5D_FRONTEND_DASHBOARD.md"
-    resources_write:
-      - "store:settings"
-      - "page:/settings"
-    depends_on:
-      - "task-a"
-    verification:
-      - command: "cd /Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian\\ Genome\\ Foundry\\ -\\ AWS\\ cloud\\ infrastructure/12_AI_Co-scientist/Google\\ co-scientist/frontend && npx tsc --noEmit 2>&1 | head -30"
-        type: typecheck
-        required: true
-      - command: "cd /Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian\\ Genome\\ Foundry\\ -\\ AWS\\ cloud\\ infrastructure/12_AI_Co-scientist/Google\\ co-scientist/frontend && npm run build 2>&1 | tail -20"
-        type: build
-        required: true
-    context_files:
-      - path: "03_architecture/Phase5/PHASE5D_FRONTEND_DASHBOARD.md"
-        reason: "Settings schema and component specifications"
+      Create integration tests for ReflectionAgent Phase 6 features.
 
-  # ==========================================================================
-  # TASK C: Layout & Navigation + App Shell
-  # ==========================================================================
-  - id: task-c
+      Tests should verify:
+      1. Refutation search is performed for hypothesis claims
+      2. Contradictory evidence is found via negation queries
+      3. Citation retractions are checked via PubMed
+      4. Counter-evidence appears in review context string
+      5. Review scores account for contradictory evidence
+      6. End-to-end reflection includes refutation analysis
+
+      Test file: 05_tests/phase6_reflection_integration_test.py
+
+    files_write:
+      - "05_tests/phase6_reflection_integration_test.py"
+
+    files_read:
+      - "05_tests/phase6_refutation_test.py"
+      - "05_tests/phase6_integration_test.py"
+      - "src/agents/reflection.py"
+      - "src/tools/refutation_search.py"
+      - "src/literature/limitations_extractor.py"
+      - "contracts/evidence_quality_interface.py"
+
+    resources_write:
+      - "test:phase6_reflection_integration"
+
+    depends_on: []
+
+    verification:
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -m py_compile 05_tests/phase6_reflection_integration_test.py"
+        type: syntax
+        required: true
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -m pytest 05_tests/phase6_reflection_integration_test.py --collect-only 2>/dev/null || echo 'Collection check'"
+        type: test_discovery
+        required: false
+
+    patch_intents: []
+
+  # Wave 2: Implement agent integrations - runs in parallel (after tests exist)
+  - id: task-generation-quality
     description: |
-      Create the application shell with Header, Sidebar, and Layout components.
-      Set up React Router for navigation between pages.
-      Create the Dashboard page with statistics overview.
-    files_write:
-      # Layout components
-      - "frontend/src/components/layout/Header.tsx"
-      - "frontend/src/components/layout/Sidebar.tsx"
-      - "frontend/src/components/layout/Layout.tsx"
-      - "frontend/src/components/layout/index.ts"
-      # App shell
-      - "frontend/src/App.tsx"
-      # Dashboard page
-      - "frontend/src/pages/Dashboard.tsx"
-      # Dashboard components
-      - "frontend/src/components/dashboard/StatCard.tsx"
-      - "frontend/src/components/dashboard/GoalSelector.tsx"
-      - "frontend/src/components/dashboard/StatusIndicator.tsx"
-      - "frontend/src/components/dashboard/index.ts"
-      # Goal store
-      - "frontend/src/store/goalStore.ts"
-    files_read:
-      - "frontend/src/types/index.ts"
-      - "frontend/src/services/api.ts"
-      - "frontend/src/hooks/usePolling.ts"
-      - "frontend/src/components/common/index.ts"
-    resources_write:
-      - "route:/"
-      - "route:/dashboard"
-      - "component:Layout"
-      - "store:goal"
-    depends_on:
-      - "task-a"
-    verification:
-      - command: "cd /Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian\\ Genome\\ Foundry\\ -\\ AWS\\ cloud\\ infrastructure/12_AI_Co-scientist/Google\\ co-scientist/frontend && npx tsc --noEmit 2>&1 | head -30"
-        type: typecheck
-        required: true
-      - command: "cd /Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian\\ Genome\\ Foundry\\ -\\ AWS\\ cloud\\ infrastructure/12_AI_Co-scientist/Google\\ co-scientist/frontend && npm run build 2>&1 | tail -20"
-        type: build
-        required: true
-    context_files:
-      - path: "src/api/main.py"
-        reason: "API endpoints for statistics"
+      Integrate PaperQualityScorer and LimitationsExtractor into GenerationAgent.
 
-  # ==========================================================================
-  # TASK D: Chat Interface
-  # ==========================================================================
-  - id: task-d
+      Implementation changes to src/agents/generation.py:
+      1. Add imports: PaperQualityScorer, LimitationsExtractor, settings flags
+      2. Initialize self.quality_scorer and self.limitations_extractor in __init__
+      3. Add _enrich_papers_with_quality() method:
+         - Score each paper using quality_scorer.compute_quality_score()
+         - Set paper.quality_score attribute
+         - Filter papers below settings.quality_min_threshold
+         - Return ranked list (highest quality first)
+      4. Add _extract_paper_limitations() method:
+         - Use limitations_extractor.batch_extract() on papers
+         - Format with format_batch_for_context()
+         - Return formatted string or empty if disabled
+      5. Update _format_citation_graph_context():
+         - Add quality labels [QUALITY: HIGH/MEDIUM/LOW] to each paper
+         - Skip papers where is_retracted=True
+      6. Modify execute() method:
+         - After _search_literature_tools(), call _enrich_papers_with_quality()
+         - After enrichment, call _extract_paper_limitations()
+         - Update literature_context to include both quality and limitations
+      7. Update _validate_citations():
+         - Check is_retracted flag on citation graph nodes
+         - Log warning for retracted citations
+
+    files_write:
+      - "src/agents/generation.py"
+
+    files_read:
+      - "src/literature/quality_scorer.py"
+      - "src/literature/limitations_extractor.py"
+      - "src/literature/citation_graph.py"
+      - "src/config.py"
+      - "contracts/evidence_quality_interface.py"
+
+    resources_write:
+      - "method:GenerationAgent._enrich_papers_with_quality"
+      - "method:GenerationAgent._extract_paper_limitations"
+
+    depends_on:
+      - "task-generation-tests"
+
+    verification:
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -c \"from src.agents.generation import GenerationAgent; g = GenerationAgent(); print('Init OK')\""
+        type: import
+        required: true
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -m py_compile src/agents/generation.py"
+        type: syntax
+        required: true
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -m pytest 05_tests/phase6_generation_integration_test.py -v --tb=short"
+        type: test
+        required: true
+
+    patch_intents: []
+
+  - id: task-reflection-refutation
     description: |
-      Implement the chat interface for scientist interaction with the AI.
-      Includes ChatWindow, MessageList, MessageInput components.
-      Uses polling for message updates.
-    files_write:
-      # Chat components
-      - "frontend/src/components/chat/ChatWindow.tsx"
-      - "frontend/src/components/chat/MessageList.tsx"
-      - "frontend/src/components/chat/MessageInput.tsx"
-      - "frontend/src/components/chat/ChatMessage.tsx"
-      - "frontend/src/components/chat/ContextIndicator.tsx"
-      - "frontend/src/components/chat/index.ts"
-      # Chat page
-      - "frontend/src/pages/ChatPage.tsx"
-      # Chat store
-      - "frontend/src/store/chatStore.ts"
-    files_read:
-      - "frontend/src/types/index.ts"
-      - "frontend/src/services/api.ts"
-      - "frontend/src/hooks/usePolling.ts"
-      - "frontend/src/components/common/index.ts"
-      - "src/api/chat.py"
-    resources_write:
-      - "route:/chat"
-      - "store:chat"
-    depends_on:
-      - "task-a"
-    verification:
-      - command: "cd /Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian\\ Genome\\ Foundry\\ -\\ AWS\\ cloud\\ infrastructure/12_AI_Co-scientist/Google\\ co-scientist/frontend && npx tsc --noEmit 2>&1 | head -30"
-        type: typecheck
-        required: true
-      - command: "cd /Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian\\ Genome\\ Foundry\\ -\\ AWS\\ cloud\\ infrastructure/12_AI_Co-scientist/Google\\ co-scientist/frontend && npm run build 2>&1 | tail -20"
-        type: build
-        required: true
-    context_files:
-      - path: "src/api/chat.py"
-        reason: "Chat API endpoints"
-      - path: "03_architecture/Phase5/PHASE5D_FRONTEND_DASHBOARD.md"
-        reason: "Chat component specifications"
+      Integrate RefutationSearchTool into ReflectionAgent.
 
-  # ==========================================================================
-  # TASK E: Hypothesis Browser & Visualizations
-  # ==========================================================================
-  - id: task-e
-    description: |
-      Implement the hypothesis browser with list/detail views, Elo ratings,
-      and visualizations (Elo chart, quality distribution).
-      Uses Recharts for data visualization.
-    files_write:
-      # Hypothesis components
-      - "frontend/src/components/hypotheses/HypothesisList.tsx"
-      - "frontend/src/components/hypotheses/HypothesisCard.tsx"
-      - "frontend/src/components/hypotheses/HypothesisDetail.tsx"
-      - "frontend/src/components/hypotheses/FeedbackForm.tsx"
-      - "frontend/src/components/hypotheses/TournamentRecord.tsx"
-      - "frontend/src/components/hypotheses/index.ts"
-      # Visualization components
-      - "frontend/src/components/visualizations/EloChart.tsx"
-      - "frontend/src/components/visualizations/QualityDistribution.tsx"
-      - "frontend/src/components/visualizations/AgentActivity.tsx"
-      - "frontend/src/components/visualizations/index.ts"
-      # Hypotheses page
-      - "frontend/src/pages/HypothesesPage.tsx"
-      # Hypothesis store
-      - "frontend/src/store/hypothesisStore.ts"
-    files_read:
-      - "frontend/src/types/index.ts"
-      - "frontend/src/services/api.ts"
-      - "frontend/src/hooks/usePolling.ts"
-      - "frontend/src/components/common/index.ts"
-      - "src/api/main.py"
-    resources_write:
-      - "route:/hypotheses"
-      - "store:hypothesis"
-    depends_on:
-      - "task-a"
-    verification:
-      - command: "cd /Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian\\ Genome\\ Foundry\\ -\\ AWS\\ cloud\\ infrastructure/12_AI_Co-scientist/Google\\ co-scientist/frontend && npx tsc --noEmit 2>&1 | head -30"
-        type: typecheck
-        required: true
-      - command: "cd /Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian\\ Genome\\ Foundry\\ -\\ AWS\\ cloud\\ infrastructure/12_AI_Co-scientist/Google\\ co-scientist/frontend && npm run build 2>&1 | tail -20"
-        type: build
-        required: true
-    context_files:
-      - path: "src/api/main.py"
-        reason: "Hypothesis API endpoints"
-      - path: "03_architecture/schemas.py"
-        reason: "Hypothesis data schema"
-      - path: "03_architecture/Phase5/PHASE5D_FRONTEND_DASHBOARD.md"
-        reason: "EloChart and visualization specifications"
+      Implementation changes to src/agents/reflection.py:
+      1. Add imports: RefutationSearchTool, LimitationsExtractor, initialize_tools, settings
+      2. Update __init__:
+         - Initialize tool_registry = initialize_tools()
+         - Create self.refutation_tool with pubmed and semantic_scholar from registry
+         - Create self.limitations_extractor
+      3. Add async _search_for_refutation() method:
+         - Extract core claim from hypothesis.hypothesis_statement
+         - Call refutation_tool.search_contradictions()
+         - Return tuple of (contradictions_list, retraction_status_dict)
+      4. Add async _check_citation_retractions() method:
+         - For each citation in hypothesis.literature_citations
+         - Call refutation_tool.check_retractions() if has PMID
+         - Return dict mapping citation title to retraction status
+      5. Add _format_refutation_context() method:
+         - Use refutation_tool.format_contradictions_for_context()
+         - Add limitations context if available
+         - Return combined warning string
+      6. Convert execute() to async:
+         - If settings.enable_refutation_search:
+           - Call _search_for_refutation()
+           - Call _check_citation_retractions()
+           - Format refutation context
+         - Append refutation context to review prompt
+         - Include counter-evidence section in structured_prompt
 
-  # ==========================================================================
-  # TASK F: Literature Page & PDF Upload
-  # ==========================================================================
-  - id: task-f
-    description: |
-      Implement the literature page with PDF upload, document list,
-      and search functionality. Integrates with the documents API.
     files_write:
-      # Literature components
-      - "frontend/src/components/literature/PdfUpload.tsx"
-      - "frontend/src/components/literature/DocumentList.tsx"
-      - "frontend/src/components/literature/SearchResults.tsx"
-      - "frontend/src/components/literature/DocumentCard.tsx"
-      - "frontend/src/components/literature/SearchBar.tsx"
-      - "frontend/src/components/literature/index.ts"
-      # Literature page
-      - "frontend/src/pages/LiteraturePage.tsx"
-      # Literature store
-      - "frontend/src/store/literatureStore.ts"
-    files_read:
-      - "frontend/src/types/index.ts"
-      - "frontend/src/services/api.ts"
-      - "frontend/src/components/common/index.ts"
-      - "src/api/documents.py"
-    resources_write:
-      - "route:/literature"
-      - "store:literature"
-    depends_on:
-      - "task-a"
-    verification:
-      - command: "cd /Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian\\ Genome\\ Foundry\\ -\\ AWS\\ cloud\\ infrastructure/12_AI_Co-scientist/Google\\ co-scientist/frontend && npx tsc --noEmit 2>&1 | head -30"
-        type: typecheck
-        required: true
-      - command: "cd /Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian\\ Genome\\ Foundry\\ -\\ AWS\\ cloud\\ infrastructure/12_AI_Co-scientist/Google\\ co-scientist/frontend && npm run build 2>&1 | tail -20"
-        type: build
-        required: true
-    context_files:
-      - path: "src/api/documents.py"
-        reason: "Documents API endpoints"
-      - path: "03_architecture/Phase5/PHASE5D_FRONTEND_DASHBOARD.md"
-        reason: "Literature component specifications"
+      - "src/agents/reflection.py"
 
-# ==========================================================================
-# Integration Notes
-# ==========================================================================
+    files_read:
+      - "src/tools/refutation_search.py"
+      - "src/literature/limitations_extractor.py"
+      - "src/tools/registry.py"
+      - "src/config.py"
+      - "contracts/evidence_quality_interface.py"
+
+    resources_write:
+      - "method:ReflectionAgent._search_for_refutation"
+      - "method:ReflectionAgent._check_citation_retractions"
+      - "method:ReflectionAgent._format_refutation_context"
+
+    depends_on:
+      - "task-reflection-tests"
+
+    verification:
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -c \"from src.agents.reflection import ReflectionAgent; r = ReflectionAgent(); print('Init OK')\""
+        type: import
+        required: true
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -m py_compile src/agents/reflection.py"
+        type: syntax
+        required: true
+      - command: "cd '/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist' && python -m pytest 05_tests/phase6_reflection_integration_test.py -v --tb=short"
+        type: test
+        required: true
+
+    patch_intents: []
+
+contracts:
+  - name: "EvidenceQualityEnhancementProtocol"
+    version: "31f3178"
+    file_path: "contracts/evidence_quality_interface.py"
+    methods:
+      - "PaperQualityScorerProtocol.compute_quality_score"
+      - "PaperQualityScorerProtocol.rank_papers_by_quality"
+      - "PaperQualityScorerProtocol.filter_by_quality"
+      - "PaperQualityScorerProtocol.get_quality_label"
+      - "PaperQualityScorerProtocol.format_quality_context"
+      - "LimitationsExtractorProtocol.extract_from_abstract"
+      - "LimitationsExtractorProtocol.batch_extract"
+      - "LimitationsExtractorProtocol.format_batch_for_context"
+      - "RefutationSearchProtocol.search_contradictions"
+      - "RefutationSearchProtocol.check_retractions"
+      - "RefutationSearchProtocol.format_contradictions_for_context"
+      - "GenerationAgentEvidenceProtocol._enrich_papers_with_quality"
+      - "GenerationAgentEvidenceProtocol._extract_paper_limitations"
+      - "ReflectionAgentEvidenceProtocol._search_for_refutation"
+      - "ReflectionAgentEvidenceProtocol._check_citation_retractions"
+      - "ReflectionAgentEvidenceProtocol._format_refutation_context"
+    consumers:
+      - "task-generation-quality"
+      - "task-reflection-refutation"
+      - "task-generation-tests"
+      - "task-reflection-tests"
+
+metadata:
+  # Risk factors:
+  # - Modifying agents (sensitive paths): +20
+  # - 4 tasks (no extra penalty)
+  # - 4 files modified (no extra penalty)
+  # - No new dependencies
+  # - Tests created first (TDD reduces risk)
+  risk_score: 22
+  approval_status: "auto_approved"
+  max_parallel_workers: 2
+  estimated_duration_minutes: 45
+
+# Execution Plan Summary:
 #
-# After all tasks complete, App.tsx (task-c) imports all pages and sets up routes.
-# The Layout component wraps all pages with Header and Sidebar.
+# Wave 1 (Parallel - no dependencies):
+#   - task-generation-tests: Create GenerationAgent integration tests
+#   - task-reflection-tests: Create ReflectionAgent integration tests
 #
-# Hot file coordination:
-# - App.tsx is exclusively owned by task-c
-# - Each page is owned by its respective task
-# - Stores are independently owned (no conflicts)
+# Wave 2 (Parallel - depends on Wave 1):
+#   - task-generation-quality: Implement GenerationAgent Phase 6 integration
+#   - task-reflection-refutation: Implement ReflectionAgent Phase 6 integration
 #
-# Integration verification will be done after merge by the Supervisor.
-
-contracts: []
-
-# No contracts needed - all tasks share TypeScript types from task-a
-# and use the same API service layer.
+# Notes:
+# - Tests created first (TDD approach) ensures clear requirements
+# - Wave 2 tasks are independent (different files) so can run in parallel
+# - Contract defines interface expectations for parallel development
+# - All Phase 6 features already implemented and tested (quality_scorer, refutation_search, limitations_extractor)

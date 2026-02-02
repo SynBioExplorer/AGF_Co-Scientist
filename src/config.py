@@ -123,6 +123,29 @@ class Settings(BaseSettings):
     enable_parallel_expansion: bool = True  # Parallel citation graph expansion
     max_parallel_expansions: int = 5  # Concurrent expansion tasks
 
+    # =========================================================================
+    # Phase 6: Evidence Quality Enhancement Configuration
+    # =========================================================================
+
+    # Paper Quality Scoring (Phase 6)
+    enable_quality_scoring: bool = True  # Enable multi-factor quality scoring
+    quality_citation_weight: float = 0.5  # Weight for citation count score
+    quality_recency_weight: float = 0.3  # Weight for recency score
+    quality_journal_weight: float = 0.2  # Weight for journal impact score
+    quality_min_threshold: float = 0.3  # Filter papers below this quality score
+    quality_recency_halflife_years: int = 5  # Half-life for recency decay
+
+    # Refutation Search (Phase 6)
+    enable_refutation_search: bool = True  # Enable searching for contradictions
+    refutation_max_results: int = 10  # Maximum contradictory papers to find
+    refutation_min_quality_score: float = 0.4  # Only use high-quality contradictions
+    refutation_check_retractions: bool = True  # Check PubMed for retractions
+
+    # Limitations Extraction (Phase 6)
+    enable_limitations_extraction: bool = True  # Enable limitations extraction
+    limitations_min_confidence: float = 0.5  # Only include high-confidence limitations
+    limitations_include_in_context: bool = True  # Include limitations in LLM context
+
     class Config:
         env_file = "03_architecture/.env"
         extra = "ignore"

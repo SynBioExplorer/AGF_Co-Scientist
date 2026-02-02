@@ -3,6 +3,13 @@ Citation Graph
 
 Build and analyze citation networks between papers.
 Supports finding citation paths, common citations, and ranking by citation count.
+
+Phase 6 Enhancements:
+- quality_score: Multi-factor quality score (citation + recency + journal)
+- is_retracted: Whether paper has been retracted
+- retraction_notices: List of retraction/correction notices
+- known_limitations: Extracted limitation statements from paper
+- limitations_confidence: Confidence score for limitations extraction
 """
 
 from typing import Optional
@@ -22,6 +29,33 @@ class CitationNode(BaseModel):
     citation_count: int = Field(0, description="Number of times cited")
     reference_count: int = Field(0, description="Number of references")
     abstract: Optional[str] = Field(None, description="Paper abstract (Phase 6 Week 3)")
+    venue: Optional[str] = Field(None, description="Publication venue/journal")
+
+    # Phase 6: Paper Quality Scoring
+    quality_score: Optional[float] = Field(
+        None, ge=0.0, le=1.0,
+        description="Multi-factor quality score (citation + recency + journal)"
+    )
+
+    # Phase 6: Refutation Search
+    is_retracted: Optional[bool] = Field(
+        None,
+        description="Whether paper has been retracted"
+    )
+    retraction_notices: list[str] = Field(
+        default_factory=list,
+        description="Retraction or correction notices"
+    )
+
+    # Phase 6: Limitations Extraction
+    known_limitations: list[str] = Field(
+        default_factory=list,
+        description="Extracted limitation statements from paper"
+    )
+    limitations_confidence: Optional[float] = Field(
+        None, ge=0.0, le=1.0,
+        description="Confidence score for limitations extraction (0.0-1.0)"
+    )
 
 
 class CitationEdge(BaseModel):
@@ -49,7 +83,8 @@ class CitationGraph:
         title: str,
         authors: list[str],
         year: Optional[int] = None,
-        doi: Optional[str] = None
+        doi: Optional[str] = None,
+        **kwargs
     ) -> None:
         """Add a paper to the graph.
 
@@ -59,6 +94,7 @@ class CitationGraph:
             authors: List of author names
             year: Publication year
             doi: DOI if available
+            **kwargs: Additional fields (venue, abstract, etc.)
         """
         if paper_id not in self.nodes:
             self.nodes[paper_id] = CitationNode(
@@ -66,7 +102,8 @@ class CitationGraph:
                 title=title,
                 authors=authors,
                 year=year,
-                doi=doi
+                doi=doi,
+                **kwargs
             )
 
     def add_citation(self, citing_id: str, cited_id: str) -> None:
@@ -128,6 +165,24 @@ class CitationGraph:
         sorted_nodes = sorted(
             self.nodes.values(),
             key=lambda x: x.citation_count,
+            reverse=True
+        )
+        return sorted_nodes[:n]
+
+    def get_highest_quality(self, n: int = 10) -> list[CitationNode]:
+        """Get the highest quality papers (Phase 6).
+
+        Args:
+            n: Number of papers to return
+
+        Returns:
+            List of papers sorted by quality score
+        """
+        # Filter papers with quality scores, then sort
+        scored = [node for node in self.nodes.values() if node.quality_score is not None]
+        sorted_nodes = sorted(
+            scored,
+            key=lambda x: x.quality_score or 0,
             reverse=True
         )
         return sorted_nodes[:n]
@@ -227,6 +282,28 @@ class CitationGraph:
         refs_b = self._citations.get(paper_b_id, set())
         return len(refs_a & refs_b)
 
+    def get_retracted_papers(self) -> list[CitationNode]:
+        """Get all retracted papers in the graph (Phase 6).
+
+        Returns:
+            List of retracted papers
+        """
+        return [
+            node for node in self.nodes.values()
+            if node.is_retracted
+        ]
+
+    def get_papers_with_limitations(self) -> list[CitationNode]:
+        """Get all papers with extracted limitations (Phase 6).
+
+        Returns:
+            List of papers with known_limitations
+        """
+        return [
+            node for node in self.nodes.values()
+            if node.known_limitations
+        ]
+
     def to_dict(self) -> dict:
         """Serialize graph to dictionary.
 
@@ -283,7 +360,10 @@ class CitationGraph:
                 'avg_citations_per_paper': 0.0,
                 'avg_references_per_paper': 0.0,
                 'max_citations': 0,
-                'max_references': 0
+                'max_references': 0,
+                'retracted_count': 0,
+                'papers_with_limitations': 0,
+                'papers_with_quality_score': 0
             }
 
         citation_counts = [node.citation_count for node in self.nodes.values()]
@@ -295,5 +375,8 @@ class CitationGraph:
             'avg_citations_per_paper': sum(citation_counts) / len(self.nodes),
             'avg_references_per_paper': sum(reference_counts) / len(self.nodes),
             'max_citations': max(citation_counts) if citation_counts else 0,
-            'max_references': max(reference_counts) if reference_counts else 0
+            'max_references': max(reference_counts) if reference_counts else 0,
+            'retracted_count': len(self.get_retracted_papers()),
+            'papers_with_limitations': len(self.get_papers_with_limitations()),
+            'papers_with_quality_score': sum(1 for n in self.nodes.values() if n.quality_score is not None)
         }
