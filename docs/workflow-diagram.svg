@@ -1,4 +1,4 @@
-<svg viewBox="0 0 1200 1400" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 1200 2450" xmlns="http://www.w3.org/2000/svg">
   <!-- Definitions -->
   <defs>
     <!-- Gradients -->
@@ -52,9 +52,21 @@
       <stop offset="100%" style="stop-color:#8ec5fc;stop-opacity:1" />
     </linearGradient>
 
-    <!-- Arrow marker -->
+    <!-- Arrow markers -->
     <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
       <polygon points="0 0, 10 3, 0 6" fill="#6b7280" />
+    </marker>
+
+    <marker id="arrowheadBlue" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#3b82f6" />
+    </marker>
+
+    <marker id="arrowheadGreen" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#10b981" />
+    </marker>
+
+    <marker id="arrowheadOrange" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#f59e0b" />
     </marker>
 
     <!-- Drop shadow -->
@@ -72,7 +84,11 @@
   </defs>
 
   <!-- Background -->
-  <rect width="1200" height="1400" fill="#f9fafb"/>
+  <rect width="1200" height="2450" fill="#f9fafb"/>
+
+  <!-- ========================================================================= -->
+  <!-- PART 1: AGENT ARCHITECTURE (Overview - No arrows)                        -->
+  <!-- ========================================================================= -->
 
   <!-- Title -->
   <text x="600" y="40" font-family="Arial, sans-serif" font-size="28" font-weight="bold" text-anchor="middle" fill="#1f2937">
@@ -91,292 +107,718 @@
     Description, Constraints, Preferences
   </text>
 
-  <!-- Arrow to Supervisor -->
-  <line x1="600" y1="160" x2="600" y2="200" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowhead)"/>
-
   <!-- Supervisor Agent -->
-  <rect x="350" y="200" width="500" height="100" rx="10" fill="url(#supervisorGrad)" filter="url(#shadow)"/>
-  <text x="600" y="230" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#fff">
-    SUPERVISOR AGENT
+  <rect x="350" y="180" width="500" height="120" rx="10" fill="url(#supervisorGrad)" filter="url(#shadow)"/>
+  <text x="600" y="210" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#fff">
+    SUPERVISOR AGENT (35% Gen • 18% Ref • 18% Rank • 12% Obs • 9% Evo • 4% Prox • 4% Meta)
   </text>
-  <text x="600" y="250" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#fff">
-    Dynamic Task Queue • Weighted Agent Selection
+  <text x="600" y="232" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+    Dynamic Task Queue • Weighted Agent Selection • Terminal Conditions
   </text>
-  <text x="600" y="267" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#fff">
-    Terminal Conditions • Checkpoint/Resume • Timeout Protection
+  <text x="600" y="248" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+    Checkpoint/Resume • Timeout Protection • Budget Enforcement (Max 2h, $50 AUD)
   </text>
-  <text x="600" y="284" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#fff">
-    Budget Enforcement (Max 2h, Cost Tracking)
+  <text x="600" y="264" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+    Weight Adjustment: Tournament convergence • Generation success • Evolution improvement
   </text>
-
-  <!-- Arrows from Supervisor to Core Agents -->
-  <line x1="400" y1="300" x2="200" y2="360" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowhead)"/>
-  <line x1="600" y1="300" x2="600" y2="360" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowhead)"/>
-  <line x1="800" y1="300" x2="1000" y2="360" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="600" y="285" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff" opacity="0.8">
+    ⚠️ Mandatory Safety Gates: Generation → Safety Review → Reflection → Tournament
+  </text>
 
   <!-- Generation Agent -->
-  <rect x="50" y="360" width="300" height="140" rx="10" fill="url(#generationGrad)" filter="url(#shadow)"/>
-  <text x="200" y="385" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#fff">
+  <rect x="50" y="330" width="300" height="160" rx="10" fill="url(#generationGrad)" filter="url(#shadow)"/>
+  <text x="200" y="355" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#fff">
     GENERATION
   </text>
-  <text x="200" y="405" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    4 Methods:
+  <text x="200" y="375" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+    4 Methods (Dynamic Selection):
   </text>
-  <text x="200" y="423" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • Literature Exploration (PubMed, S2)
+  <text x="200" y="393" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
+    1. Literature Exploration (PubMed + S2)
   </text>
-  <text x="200" y="438" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • Simulated Debate
+  <text x="200" y="408" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
+    2. Simulated Debate (Multi-turn self-play)
   </text>
-  <text x="200" y="453" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • Iterative Assumptions
+  <text x="200" y="423" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
+    3. Iterative Assumptions (Reasoning hops)
   </text>
-  <text x="200" y="468" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • Research Expansion
+  <text x="200" y="438" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
+    4. Research Expansion (Explore gaps)
   </text>
-  <text x="200" y="488" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff" opacity="0.9">
-    Citation Graph • Multi-Source Merging
+  <text x="200" y="458" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff" opacity="0.9">
+    Output: Hypothesis (ID, Elo=1200, Status=GENERATED)
+  </text>
+  <text x="200" y="475" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff" opacity="0.9">
+    Citation Graph • Quality Scores • Limitation Extraction
   </text>
 
   <!-- Reflection Agent -->
-  <rect x="450" y="360" width="300" height="140" rx="10" fill="url(#reflectionGrad)" filter="url(#shadow)"/>
-  <text x="600" y="385" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#fff">
+  <rect x="450" y="330" width="300" height="160" rx="10" fill="url(#reflectionGrad)" filter="url(#shadow)"/>
+  <text x="600" y="355" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#fff">
     REFLECTION
   </text>
-  <text x="600" y="405" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+  <text x="600" y="375" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
     6 Review Types:
   </text>
-  <text x="600" y="423" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • Initial Review
+  <text x="600" y="393" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
+    • Initial Review (Quick filter)
   </text>
-  <text x="600" y="438" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • Full Review (with search)
+  <text x="600" y="408" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
+    • Full Review (Literature search)
   </text>
-  <text x="600" y="453" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • Deep Verification
+  <text x="600" y="423" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
+    • Deep Verification (Assumption decomposition)
   </text>
-  <text x="600" y="468" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+  <text x="600" y="438" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
     • Observation • Simulation • Tournament
   </text>
-  <text x="600" y="488" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff" opacity="0.9">
-    Correctness • Quality • Novelty • Safety
+  <text x="600" y="458" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff" opacity="0.9">
+    Scores: Correctness • Quality • Novelty • Safety
+  </text>
+  <text x="600" y="475" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff" opacity="0.9">
+    Refutation Search • Retraction Check (Phase 6)
   </text>
 
   <!-- Ranking Agent -->
-  <rect x="850" y="360" width="300" height="140" rx="10" fill="url(#rankingGrad)" filter="url(#shadow)"/>
-  <text x="1000" y="385" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#fff">
-    RANKING
+  <rect x="850" y="330" width="300" height="160" rx="10" fill="url(#rankingGrad)" filter="url(#shadow)"/>
+  <text x="1000" y="355" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#fff">
+    RANKING - Tournament
   </text>
-  <text x="1000" y="405" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    Elo Tournament (1200 initial):
+  <text x="1000" y="375" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+    Elo Tournament (K=32, Initial=1200):
   </text>
-  <text x="1000" y="423" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • Pairwise Comparisons
+  <text x="1000" y="393" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
+    • Proximity-Aware Pairing (70% cluster / 20% cross / 10% elite)
   </text>
-  <text x="1000" y="438" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • Multi-Turn Debates (top-ranked)
+  <text x="1000" y="408" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
+    • Multi-Turn Debates (Top-10 OR Elo diff &lt;100)
   </text>
-  <text x="1000" y="453" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • Proximity-Aware Pairing
+  <text x="1000" y="423" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
+    • Single-Turn Comparisons (Others)
   </text>
-  <text x="1000" y="468" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • Win/Loss Tracking
+  <text x="1000" y="438" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
+    • Zero-Sum Elo Updates
   </text>
-  <text x="1000" y="488" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff" opacity="0.9">
-    70% within-cluster, 20% cross-cluster
+  <text x="1000" y="458" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff" opacity="0.9">
+    Output: Winner ID • Rationale • Elo Changes
   </text>
-
-  <!-- Arrows to next layer -->
-  <line x1="200" y1="500" x2="200" y2="560" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowhead)"/>
-  <line x1="600" y1="500" x2="600" y2="560" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowhead)"/>
-  <line x1="1000" y1="500" x2="1000" y2="560" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="1000" y="475" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff" opacity="0.9">
+    Convergence: Top-10 stability &gt; 0.9
+  </text>
 
   <!-- Evolution Agent -->
-  <rect x="50" y="560" width="300" height="140" rx="10" fill="url(#evolutionGrad)" filter="url(#shadow)"/>
-  <text x="200" y="585" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#fff">
+  <rect x="50" y="520" width="300" height="140" rx="10" fill="url(#evolutionGrad)" filter="url(#shadow)"/>
+  <text x="200" y="545" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#fff">
     EVOLUTION
   </text>
-  <text x="200" y="605" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    7 Strategies:
+  <text x="200" y="565" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+    7 Strategies (Dynamic Selection):
   </text>
-  <text x="200" y="623" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • Grounding • Coherence
+  <text x="200" y="583" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
+    • Grounding • Coherence • Feasibility
   </text>
-  <text x="200" y="638" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • Feasibility • Inspiration
+  <text x="200" y="598" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
+    • Inspiration • Combination • Simplification
   </text>
-  <text x="200" y="653" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • Combination • Simplification
-  </text>
-  <text x="200" y="668" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+  <text x="200" y="613" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
     • Out-of-Box Thinking
   </text>
-  <text x="200" y="688" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff" opacity="0.9">
-    Dynamic Strategy Selection
+  <text x="200" y="633" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff" opacity="0.9">
+    ⚠️ Creates NEW Hypothesis (New ID, Inherits Elo)
+  </text>
+  <text x="200" y="648" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff" opacity="0.9">
+    Parent marked EVOLVED (not deleted)
   </text>
 
   <!-- Proximity Agent -->
-  <rect x="450" y="560" width="300" height="140" rx="10" fill="url(#proximityGrad)" filter="url(#shadow)"/>
-  <text x="600" y="585" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#fff">
+  <rect x="450" y="520" width="300" height="140" rx="10" fill="url(#proximityGrad)" filter="url(#shadow)"/>
+  <text x="600" y="545" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#fff">
     PROXIMITY
   </text>
-  <text x="600" y="605" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+  <text x="600" y="565" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
     Similarity Analysis:
   </text>
-  <text x="600" y="623" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+  <text x="600" y="583" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
     • Cosine Similarity (embeddings)
   </text>
-  <text x="600" y="638" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+  <text x="600" y="598" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
     • Clustering (threshold: 0.85)
   </text>
-  <text x="600" y="653" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • De-duplication
+  <text x="600" y="613" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
+    • De-duplication • Theme Extraction
   </text>
-  <text x="600" y="668" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    • Graph Analysis • Theme Extraction
+  <text x="600" y="633" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff" opacity="0.9">
+    Enables Tournament Pairing Strategy
   </text>
-  <text x="600" y="688" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff" opacity="0.9">
-    Tournament Pairing • Diversity Sampling
+  <text x="600" y="648" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff" opacity="0.9">
+    Refresh Frequency: Every N iterations
   </text>
 
   <!-- Meta-Review Agent -->
-  <rect x="850" y="560" width="300" height="140" rx="10" fill="url(#metaGrad)" filter="url(#shadow)"/>
-  <text x="1000" y="585" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#1f2937">
+  <rect x="850" y="520" width="300" height="140" rx="10" fill="url(#metaGrad)" filter="url(#shadow)"/>
+  <text x="1000" y="545" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#1f2937">
     META-REVIEW
   </text>
-  <text x="1000" y="605" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
-    Synthesis:
+  <text x="1000" y="565" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
+    Self-Improving Loop:
   </text>
-  <text x="1000" y="623" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
-    • Pattern Analysis (debates)
+  <text x="1000" y="583" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1f2937">
+    • Pattern Analysis (Win/Loss in debates)
   </text>
-  <text x="1000" y="638" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
-    • Research Overview
+  <text x="1000" y="598" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1f2937">
+    • Extract: Recurring strengths/weaknesses
   </text>
-  <text x="1000" y="653" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
-    • Diversity Sampling (10 hypotheses)
+  <text x="1000" y="613" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1f2937">
+    • Generate feedback → Agent prompts
   </text>
-  <text x="1000" y="668" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
-    • Agent Feedback Loop
+  <text x="1000" y="633" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1f2937" opacity="0.9">
+    In-Context Learning (No backpropagation)
   </text>
-  <text x="1000" y="688" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1f2937" opacity="0.7">
-    In-Context Learning
+  <text x="1000" y="648" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937" opacity="0.7">
+    Research Overview • Diversity Sampling
   </text>
-
-  <!-- Arrows to Observation and Safety -->
-  <line x1="200" y1="700" x2="350" y2="760" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowhead)"/>
-  <line x1="1000" y1="700" x2="850" y2="760" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowhead)"/>
 
   <!-- Observation Review Agent -->
-  <rect x="50" y="760" width="300" height="120" rx="10" fill="url(#observationGrad)" filter="url(#shadow)"/>
-  <text x="200" y="785" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#fff">
+  <rect x="50" y="690" width="300" height="120" rx="10" fill="url(#observationGrad)" filter="url(#shadow)"/>
+  <text x="200" y="715" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#fff">
     OBSERVATION REVIEW
   </text>
-  <text x="200" y="805" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
-    Literature Validation:
+  <text x="200" y="735" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+    Literature Validation (Phase 6):
   </text>
-  <text x="200" y="823" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+  <text x="200" y="753" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
     • Extract Observations from Papers
   </text>
-  <text x="200" y="838" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+  <text x="200" y="768" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
     • Score Hypothesis vs Observations
   </text>
-  <text x="200" y="853" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
+  <text x="200" y="783" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff">
     • Mechanistic Alignment Check
   </text>
-  <text x="200" y="870" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#fff" opacity="0.9">
-    Phase 6: Long-Tail Observation Coverage
+  <text x="200" y="800" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff" opacity="0.9">
+    Long-Tail Observation Coverage
   </text>
 
   <!-- Safety Agent -->
-  <rect x="850" y="760" width="300" height="120" rx="10" fill="url(#safetyGrad)" filter="url(#shadow)"/>
-  <text x="1000" y="785" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#1f2937">
+  <rect x="850" y="690" width="300" height="120" rx="10" fill="url(#safetyGrad)" filter="url(#shadow)"/>
+  <text x="1000" y="715" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#1f2937">
     SAFETY
   </text>
-  <text x="1000" y="805" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
+  <text x="1000" y="735" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
     Guardrails:
   </text>
-  <text x="1000" y="823" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
+  <text x="1000" y="753" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1f2937">
     • Budget Enforcement ($50 AUD default)
   </text>
-  <text x="1000" y="838" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
+  <text x="1000" y="768" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1f2937">
     • Ethics Review (safety score &gt; 0.5)
   </text>
-  <text x="1000" y="853" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
+  <text x="1000" y="783" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1f2937">
     • Constraint Validation
   </text>
-  <text x="1000" y="870" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1f2937" opacity="0.7">
+  <text x="1000" y="800" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937" opacity="0.7">
     Timeout Protection • Cost Tracking
   </text>
 
-  <!-- Arrow to Storage Layer -->
-  <line x1="600" y1="700" x2="600" y2="930" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <!-- ========================================================================= -->
+  <!-- PART 2: HYPOTHESIS LIFECYCLE & TOURNAMENT MECHANICS (NEW)                -->
+  <!-- ========================================================================= -->
 
-  <!-- Storage Layer -->
-  <rect x="250" y="930" width="700" height="120" rx="10" fill="url(#storageGrad)" filter="url(#shadow)"/>
-  <text x="600" y="960" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#1f2937">
-    STORAGE &amp; INFRASTRUCTURE LAYER
+  <!-- Section Divider -->
+  <line x1="50" y1="850" x2="1150" y2="850" stroke="#9ca3af" stroke-width="2" stroke-dasharray="5,5"/>
+
+  <!-- Section Title -->
+  <text x="600" y="900" font-family="Arial, sans-serif" font-size="24" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    Hypothesis Lifecycle &amp; Tournament Mechanics
   </text>
-  <text x="600" y="985" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#1f2937">
-    PostgreSQL (hypotheses, reviews, matches, observations) • Redis (caching, 24h papers, 7d metadata)
-  </text>
-  <text x="600" y="1003" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#1f2937">
-    ChromaDB (vector embeddings, semantic search) • LiteratureRepository (PDF parsing, citations)
-  </text>
-  <text x="600" y="1021" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#1f2937">
-    PubMed MCP • Semantic Scholar API • Tavily Search • LangSmith Tracing
-  </text>
-  <text x="600" y="1039" font-family="Arial, sans-serif" font-size="9" text-anchor="middle" fill="#1f2937" opacity="0.7">
-    Checkpoint/Resume • Async Adapter • Memory Cleanup
+  <text x="600" y="925" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#6b7280">
+    Complete flow from generation through evolution with tournament loop
   </text>
 
-  <!-- Arrow to Output -->
-  <line x1="600" y1="1050" x2="600" y2="1110" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <!-- Hypothesis Lifecycle Pipeline -->
+  <rect x="50" y="970" width="1100" height="280" rx="10" fill="#fff" stroke="#9ca3af" stroke-width="2" filter="url(#shadow)"/>
+
+  <text x="600" y="1000" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    Hypothesis Lifecycle States
+  </text>
+
+  <!-- State 1: GENERATED -->
+  <rect x="80" y="1020" width="140" height="80" rx="5" fill="url(#generationGrad)" filter="url(#shadow)"/>
+  <text x="150" y="1045" font-family="Arial, sans-serif" font-size="11" font-weight="bold" text-anchor="middle" fill="#fff">
+    1. GENERATED
+  </text>
+  <text x="150" y="1062" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff">
+    Elo: 1200
+  </text>
+  <text x="150" y="1076" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff">
+    New ID created
+  </text>
+  <text x="150" y="1090" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff">
+    4 methods
+  </text>
+
+  <!-- Arrow to Safety Gate -->
+  <line x1="220" y1="1060" x2="270" y2="1060" stroke="#f59e0b" stroke-width="3" marker-end="url(#arrowheadOrange)"/>
+  <text x="245" y="1050" font-family="Arial, sans-serif" font-size="8" font-weight="bold" text-anchor="middle" fill="#f59e0b">
+    Safety
+  </text>
+  <text x="245" y="1075" font-family="Arial, sans-serif" font-size="7" text-anchor="middle" fill="#f59e0b">
+    Gate
+  </text>
+
+  <!-- State 2: Safety Check -->
+  <rect x="270" y="1020" width="140" height="80" rx="5" fill="url(#safetyGrad)" filter="url(#shadow)"/>
+  <text x="340" y="1045" font-family="Arial, sans-serif" font-size="11" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    2. SAFETY CHECK
+  </text>
+  <text x="340" y="1062" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    Score &gt; 0.5?
+  </text>
+  <text x="340" y="1076" font-family="Arial, sans-serif" font-size="7" text-anchor="middle" fill="#1f2937">
+    ✓ Pass → Continue
+  </text>
+  <text x="340" y="1090" font-family="Arial, sans-serif" font-size="7" text-anchor="middle" fill="#dc2626">
+    ✗ Fail → REQUIRES_SAFETY_REVIEW
+  </text>
+
+  <!-- Arrow to Initial Review -->
+  <line x1="410" y1="1060" x2="460" y2="1060" stroke="#3b82f6" stroke-width="3" marker-end="url(#arrowheadBlue)"/>
+
+  <!-- State 3: INITIAL_REVIEW -->
+  <rect x="460" y="1020" width="140" height="80" rx="5" fill="url(#reflectionGrad)" filter="url(#shadow)"/>
+  <text x="530" y="1045" font-family="Arial, sans-serif" font-size="11" font-weight="bold" text-anchor="middle" fill="#fff">
+    3. INITIAL_REVIEW
+  </text>
+  <text x="530" y="1062" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff">
+    Reflection Agent
+  </text>
+  <text x="530" y="1076" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff">
+    Quick filter
+  </text>
+  <text x="530" y="1090" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff">
+    Pass/Fail
+  </text>
+
+  <!-- Arrow to Tournament -->
+  <line x1="600" y1="1060" x2="650" y2="1060" stroke="#10b981" stroke-width="3" marker-end="url(#arrowheadGreen)"/>
+
+  <!-- State 4: IN_TOURNAMENT -->
+  <rect x="650" y="1020" width="140" height="80" rx="5" fill="url(#rankingGrad)" filter="url(#shadow)"/>
+  <text x="720" y="1045" font-family="Arial, sans-serif" font-size="11" font-weight="bold" text-anchor="middle" fill="#fff">
+    4. IN_TOURNAMENT
+  </text>
+  <text x="720" y="1062" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff">
+    Compete vs others
+  </text>
+  <text x="720" y="1076" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff">
+    Elo updated
+  </text>
+  <text x="720" y="1090" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff">
+    Win/Loss tracked
+  </text>
+
+  <!-- Arrow to Evolution -->
+  <line x1="790" y1="1060" x2="840" y2="1060" stroke="#f59e0b" stroke-width="3" marker-end="url(#arrowheadOrange)"/>
+  <text x="815" y="1050" font-family="Arial, sans-serif" font-size="8" font-weight="bold" text-anchor="middle" fill="#f59e0b">
+    Top
+  </text>
+  <text x="815" y="1075" font-family="Arial, sans-serif" font-size="7" text-anchor="middle" fill="#f59e0b">
+    Hyps
+  </text>
+
+  <!-- State 5: EVOLVED -->
+  <rect x="840" y="1020" width="140" height="80" rx="5" fill="url(#evolutionGrad)" filter="url(#shadow)"/>
+  <text x="910" y="1045" font-family="Arial, sans-serif" font-size="11" font-weight="bold" text-anchor="middle" fill="#fff">
+    5. EVOLVED
+  </text>
+  <text x="910" y="1062" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff">
+    NEW Hypothesis
+  </text>
+  <text x="910" y="1076" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff">
+    Inherits Elo
+  </text>
+  <text x="910" y="1090" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff">
+    Parent tracked
+  </text>
+
+  <!-- Feedback Loop Arrow - Smooth rectangular path -->
+  <path d="M 980 1060 L 1050 1060 L 1050 1230 L 80 1230 L 80 1060"
+        stroke="#9ca3af" stroke-width="2" fill="none" marker-end="url(#arrowhead)" stroke-dasharray="5,5"/>
+  <text x="565" y="1222" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#6b7280">
+    Evolved Hypothesis → Back to Step 1 (Safety Gate)
+  </text>
+
+  <!-- Status Key -->
+  <text x="80" y="1120" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#1f2937">
+    Key Points:
+  </text>
+  <text x="80" y="1140" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Each hypothesis = Unique ID (immutable)
+  </text>
+  <text x="80" y="1158" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Evolution creates NEW hypothesis (not modification)
+  </text>
+  <text x="80" y="1176" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Safety gate is MANDATORY for all hypotheses
+  </text>
+  <text x="80" y="1194" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Minimum 2 reviewed hypotheses required for tournament
+  </text>
+
+  <text x="620" y="1140" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Elo rating inherited by evolved children
+  </text>
+  <text x="620" y="1158" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Parent marked EVOLVED (not deleted, audit trail)
+  </text>
+  <text x="620" y="1176" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Zero-sum Elo updates (winner gains = loser loses)
+  </text>
+  <text x="620" y="1194" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Tournament convergence: Top-10 stability &gt; 0.9
+  </text>
+
+  <!-- Tournament Mechanics Detail Box -->
+  <rect x="50" y="1280" width="550" height="380" rx="10" fill="#fff" stroke="#43e97b" stroke-width="3" filter="url(#shadow)"/>
+
+  <text x="325" y="1310" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    Tournament Match Mechanics
+  </text>
+
+  <!-- Match Pairing Strategy -->
+  <text x="70" y="1340" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#1f2937">
+    Match Pairing Strategy (Proximity-Aware):
+  </text>
+
+  <!-- Pairing boxes -->
+  <rect x="70" y="1350" width="160" height="70" rx="5" fill="#e0f2fe" stroke="#3b82f6" stroke-width="2"/>
+  <text x="150" y="1370" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    Within-Cluster (70%)
+  </text>
+  <text x="150" y="1388" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    Similar hypotheses
+  </text>
+  <text x="150" y="1403" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    from same cluster
+  </text>
+
+  <rect x="245" y="1350" width="160" height="70" rx="5" fill="#fef3c7" stroke="#f59e0b" stroke-width="2"/>
+  <text x="325" y="1370" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    Cross-Cluster (20%)
+  </text>
+  <text x="325" y="1388" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    Diverse hypotheses
+  </text>
+  <text x="325" y="1403" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    across clusters
+  </text>
+
+  <rect x="420" y="1350" width="160" height="70" rx="5" fill="#d1fae5" stroke="#10b981" stroke-width="2"/>
+  <text x="500" y="1370" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    Elite Round-Robin (10%)
+  </text>
+  <text x="500" y="1388" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    Top-10 hypotheses
+  </text>
+  <text x="500" y="1403" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    compete with each
+  </text>
+
+  <!-- Multi-turn Debate Decision Tree -->
+  <text x="70" y="1450" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#1f2937">
+    Match Format Decision:
+  </text>
+
+  <rect x="70" y="1460" width="230" height="100" rx="5" fill="#dcfce7" stroke="#10b981" stroke-width="2"/>
+  <text x="185" y="1485" font-family="Arial, sans-serif" font-size="11" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    Multi-Turn Debate (3 turns)
+  </text>
+  <text x="185" y="1503" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    Triggered when:
+  </text>
+  <text x="185" y="1518" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    • Both in Top-10 ranked, OR
+  </text>
+  <text x="185" y="1533" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    • Elo difference &lt; 100 points
+  </text>
+  <text x="185" y="1550" font-family="Arial, sans-serif" font-size="7" text-anchor="middle" fill="#10b981">
+    Each hyp argues 3x, alternating
+  </text>
+
+  <rect x="320" y="1460" width="260" height="100" rx="5" fill="#fee2e2" stroke="#ef4444" stroke-width="2"/>
+  <text x="450" y="1485" font-family="Arial, sans-serif" font-size="11" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    Single-Turn Comparison
+  </text>
+  <text x="450" y="1503" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    Used when:
+  </text>
+  <text x="450" y="1518" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    • Neither condition met
+  </text>
+  <text x="450" y="1533" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    • Lower-ranked hypotheses
+  </text>
+  <text x="450" y="1550" font-family="Arial, sans-serif" font-size="7" text-anchor="middle" fill="#ef4444">
+    Direct pairwise comparison, one decision
+  </text>
+
+  <!-- Elo Calculation Formula -->
+  <text x="70" y="1590" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#1f2937">
+    Elo Rating Update Formula:
+  </text>
+
+  <rect x="70" y="1600" width="510" height="50" rx="5" fill="#f3f4f6" stroke="#6b7280" stroke-width="2"/>
+  <text x="325" y="1622" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
+    Expected Score: E_A = 1 / (1 + 10^((R_B - R_A) / 400))
+  </text>
+  <text x="325" y="1640" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
+    Rating Change: Δ_A = K × (S_A - E_A)    where K=32, S_A ∈ {0, 1}
+  </text>
+
+  <!-- Self-Improving Loop Box -->
+  <rect x="630" y="1280" width="520" height="380" rx="10" fill="#fff" stroke="#a8edea" stroke-width="3" filter="url(#shadow)"/>
+
+  <text x="890" y="1310" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    Self-Improving Feedback Loop
+  </text>
+  <text x="890" y="1335" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#6b7280">
+    In-Context Learning (No backpropagation)
+  </text>
+
+  <!-- Circular flow diagram -->
+  <!-- Step 1: Tournament Matches -->
+  <rect x="660" y="1360" width="200" height="60" rx="5" fill="url(#rankingGrad)" filter="url(#shadow)"/>
+  <text x="760" y="1383" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#fff">
+    1. Tournament Matches
+  </text>
+  <text x="760" y="1400" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff">
+    Win/Loss outcomes
+  </text>
+  <text x="760" y="1413" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#fff">
+    Debate transcripts
+  </text>
+
+  <!-- Arrow down -->
+  <line x1="760" y1="1420" x2="760" y2="1460" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Step 2: Pattern Analysis -->
+  <rect x="660" y="1460" width="200" height="60" rx="5" fill="url(#metaGrad)" filter="url(#shadow)"/>
+  <text x="760" y="1483" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    2. Meta-Review Analysis
+  </text>
+  <text x="760" y="1500" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    Extract win patterns
+  </text>
+  <text x="760" y="1513" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    Extract loss patterns
+  </text>
+
+  <!-- Arrow down -->
+  <line x1="760" y1="1520" x2="760" y2="1560" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Step 3: Feedback Generation -->
+  <rect x="660" y="1560" width="200" height="60" rx="5" fill="#fef3c7" stroke="#f59e0b" stroke-width="2" filter="url(#shadow)"/>
+  <text x="760" y="1583" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    3. Generate Feedback
+  </text>
+  <text x="760" y="1600" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    For each agent type
+  </text>
+  <text x="760" y="1613" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    Improvement tips
+  </text>
+
+  <!-- Arrow to right agents -->
+  <line x1="860" y1="1590" x2="990" y2="1590" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <!-- Step 4: Append to Prompts -->
+  <rect x="890" y="1360" width="230" height="100" rx="5" fill="#e0f2fe" stroke="#3b82f6" stroke-width="2" filter="url(#shadow)"/>
+  <text x="1005" y="1385" font-family="Arial, sans-serif" font-size="10" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    4. Feedback → Agent Prompts
+  </text>
+  <text x="1005" y="1405" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    Generation agent prompt +=
+  </text>
+  <text x="1005" y="1420" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    Reflection agent prompt +=
+  </text>
+  <text x="1005" y="1435" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="#1f2937">
+    Evolution agent prompt +=
+  </text>
+  <text x="1005" y="1452" font-family="Arial, sans-serif" font-size="7" text-anchor="middle" fill="#3b82f6">
+    Appended to context (in-memory)
+  </text>
+
+  <!-- Arrow back to tournament -->
+  <path d="M 890 1400 Q 820 1550, 820 1540"
+        stroke="#6b7280" stroke-width="2" fill="none" marker-end="url(#arrowhead)" stroke-dasharray="5,5"/>
+  <text x="850" y="1385" font-family="Arial, sans-serif" font-size="8" font-weight="bold" text-anchor="middle" fill="#10b981">
+    Next Iteration
+  </text>
+
+  <!-- ========================================================================= -->
+  <!-- PART 3: KEY METRICS & TERMINAL CONDITIONS                                 -->
+  <!-- ========================================================================= -->
+
+  <!-- Metrics Box -->
+  <rect x="50" y="1690" width="550" height="180" rx="10" fill="#fff" stroke="#9ca3af" stroke-width="2" filter="url(#shadow)"/>
+
+  <text x="325" y="1720" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    System Metrics &amp; Parameters
+  </text>
+
+  <text x="70" y="1750" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#1f2937">
+    Tournament Parameters:
+  </text>
+  <text x="70" y="1770" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Initial Elo: 1200 (per Google paper)
+  </text>
+  <text x="70" y="1786" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • K-factor: 32 (standard chess Elo)
+  </text>
+  <text x="70" y="1802" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Pairing: 70% cluster / 20% cross / 10% elite
+  </text>
+  <text x="70" y="1818" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Multi-turn trigger: Top-10 OR Elo diff &lt; 100
+  </text>
+  <text x="70" y="1834" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Convergence threshold: Top-10 stability &gt; 0.9
+  </text>
+  <text x="70" y="1855" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Proximity clustering threshold: 0.85
+  </text>
+
+  <text x="320" y="1750" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#1f2937">
+    Agent Weights (Dynamic):
+  </text>
+  <text x="320" y="1770" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Generation: 35% (creates new hypotheses)
+  </text>
+  <text x="320" y="1786" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Reflection: 18% (reviews hypotheses)
+  </text>
+  <text x="320" y="1802" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Ranking: 18% (tournament matches)
+  </text>
+  <text x="320" y="1818" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Observation: 12% (validate vs literature)
+  </text>
+  <text x="320" y="1834" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Evolution: 9% • Proximity: 4% • Meta: 4%
+  </text>
+  <text x="320" y="1855" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    • Safety threshold: 0.5 (mandatory pass/fail)
+  </text>
+
+  <!-- Terminal Conditions Box - 2 columns -->
+  <rect x="630" y="1690" width="520" height="180" rx="10" fill="#fff" stroke="#ef4444" stroke-width="2" filter="url(#shadow)"/>
+
+  <text x="890" y="1720" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    Terminal Conditions (System Stops When Any Met)
+  </text>
+
+  <!-- Column 1 -->
+  <text x="660" y="1750" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#dc2626">
+    1. Tournament Convergence
+  </text>
+  <text x="660" y="1767" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    Top-10 Elo ratings stable
+  </text>
+  <text x="660" y="1782" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    (score &gt; 0.9, min 3 iterations)
+  </text>
+
+  <text x="660" y="1810" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#dc2626">
+    2. Budget Exhausted
+  </text>
+  <text x="660" y="1827" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    Cost exceeds limit
+  </text>
+  <text x="660" y="1842" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    ($50 AUD default)
+  </text>
+
+  <!-- Column 2 -->
+  <text x="890" y="1750" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#dc2626">
+    3. Time Limit Exceeded
+  </text>
+  <text x="890" y="1767" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    Max execution time reached
+  </text>
+  <text x="890" y="1782" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    (2 hours default)
+  </text>
+
+  <text x="890" y="1810" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#dc2626">
+    4. Quality Threshold Met
+  </text>
+  <text x="890" y="1827" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    Average quality &gt; 0.7
+  </text>
+  <text x="890" y="1842" font-family="Arial, sans-serif" font-size="9" fill="#1f2937">
+    (min 3 iterations)
+  </text>
+
+  <!-- ========================================================================= -->
+  <!-- PART 4: OUTPUTS                                                           -->
+  <!-- ========================================================================= -->
 
   <!-- Output Box -->
-  <rect x="200" y="1110" width="800" height="100" rx="10" fill="#fff" stroke="#9ca3af" stroke-width="2" filter="url(#shadow)"/>
-  <text x="600" y="1140" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#1f2937">
-    OUTPUTS
+  <rect x="50" y="1910" width="1100" height="120" rx="10" fill="#fff" stroke="#9ca3af" stroke-width="2" filter="url(#shadow)"/>
+  <text x="600" y="1945" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    SYSTEM OUTPUTS
   </text>
-  <text x="600" y="1165" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#1f2937">
-    • Ranked Hypotheses (Elo ratings, literature citations, experimental protocols)
+  <text x="600" y="1972" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#1f2937">
+    • Ranked Hypotheses (Elo ratings, complete lineage, literature citations, experimental protocols)
   </text>
-  <text x="600" y="1183" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#1f2937">
-    • Research Overview (patterns, directions, diverse sample, expert contacts)
+  <text x="600" y="1992" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#1f2937">
+    • Research Overview (synthesis, patterns, research directions, diverse sample, expert contacts)
   </text>
-  <text x="600" y="1200" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#1f2937">
-    • Meta-Review (agent feedback, improvement opportunities)
-  </text>
-
-  <!-- Arrow to API/Frontend -->
-  <line x1="600" y1="1210" x2="600" y2="1270" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowhead)"/>
-
-  <!-- API/Frontend -->
-  <rect x="350" y="1270" width="500" height="80" rx="10" fill="#10b981" filter="url(#shadow)"/>
-  <text x="600" y="1300" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#fff">
-    REST API (FastAPI) + Frontend (React)
-  </text>
-  <text x="600" y="1323" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#fff">
-    http://localhost:8000/docs • Chat Interface • Hypothesis Browser
-  </text>
-  <text x="600" y="1340" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#fff">
-    Dashboard • Literature Upload • Real-time Progress Tracking
+  <text x="600" y="2012" font-family="Arial, sans-serif" font-size="11" text-anchor="middle" fill="#1f2937">
+    • Meta-Review (recurring strengths/weaknesses, agent feedback, improvement opportunities)
   </text>
 
-  <!-- Legend -->
-  <text x="50" y="1380" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#6b7280">
-    Legend:
+  <!-- Combined Storage & API/Frontend Box -->
+  <rect x="50" y="2060" width="1100" height="190" rx="10" fill="url(#storageGrad)" filter="url(#shadow)"/>
+  <text x="600" y="2095" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    STORAGE, INFRASTRUCTURE &amp; API LAYER
   </text>
-  <circle cx="130" cy="1376" r="5" fill="url(#generationGrad)"/>
-  <text x="145" y="1380" font-family="Arial, sans-serif" font-size="9" fill="#6b7280">Phase 1-4 Agents</text>
 
-  <circle cx="280" cy="1376" r="5" fill="url(#observationGrad)"/>
-  <text x="295" y="1380" font-family="Arial, sans-serif" font-size="9" fill="#6b7280">Phase 6 Additions</text>
+  <!-- Storage Section -->
+  <text x="600" y="2122" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    Storage &amp; Data Infrastructure:
+  </text>
+  <text x="600" y="2142" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
+    PostgreSQL (hypotheses, reviews, matches, observations) • Redis (caching, 24h papers, 7d metadata)
+  </text>
+  <text x="600" y="2160" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
+    ChromaDB (vector embeddings, semantic search) • LiteratureRepository (PDF parsing, citations)
+  </text>
+  <text x="600" y="2178" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
+    PubMed MCP • Semantic Scholar API • Tavily Search • LangSmith Tracing
+  </text>
 
-  <circle cx="430" cy="1376" r="5" fill="url(#storageGrad)"/>
-  <text x="445" y="1380" font-family="Arial, sans-serif" font-size="9" fill="#6b7280">Infrastructure</text>
+  <!-- API Section -->
+  <text x="600" y="2205" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#1f2937">
+    REST API &amp; Frontend:
+  </text>
+  <text x="600" y="2225" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
+    FastAPI + React • http://localhost:8000/docs • Chat Interface • Hypothesis Browser
+  </text>
+  <text x="600" y="2243" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#1f2937">
+    Dashboard • Literature Upload • Real-time Progress Tracking • Checkpoint/Resume • Async Adapter
+  </text>
 
-  <text x="850" y="1380" font-family="Arial, sans-serif" font-size="8" fill="#9ca3af">
+  <!-- Version Marker -->
+  <text x="50" y="2400" font-family="Arial, sans-serif" font-size="8" fill="#9ca3af">
+    Version: Enhanced v2.2 - Comprehensive Tournament, Lifecycle &amp; Infrastructure Documentation
+  </text>
+  <text x="50" y="2415" font-family="Arial, sans-serif" font-size="8" fill="#9ca3af">
+    Source: src/tournament/elo.py • src/agents/supervisor.py • src/agents/evolution.py • 03_architecture/logic.md
+  </text>
+  <text x="850" y="2400" font-family="Arial, sans-serif" font-size="8" fill="#9ca3af">
     20,680 lines Python • 28 tests • 31 data models • 98 docs
   </text>
 </svg>
