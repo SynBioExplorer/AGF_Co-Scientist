@@ -110,7 +110,7 @@
   <!-- Supervisor Agent -->
   <rect x="350" y="180" width="500" height="120" rx="10" fill="url(#supervisorGrad)" filter="url(#shadow)"/>
   <text x="600" y="210" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#fff">
-    SUPERVISOR AGENT (35% Gen • 18% Ref • 18% Rank • 12% Obs • 9% Evo • 4% Prox • 4% Meta)
+    SUPERVISOR AGENT
   </text>
   <text x="600" y="232" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="#fff">
     Dynamic Task Queue • Weighted Agent Selection • Terminal Conditions
