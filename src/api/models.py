@@ -85,6 +85,10 @@ class WorkflowConfigRequest(BaseModel):
     )
 
     # Frontend compatibility - model configuration
+    llm_provider: Optional[str] = Field(
+        default=None,
+        description="LLM provider to use (e.g., 'google', 'openai')"
+    )
     default_model: Optional[str] = Field(
         default=None,
         description="Default LLM model to use for all agents"
@@ -95,9 +99,9 @@ class WorkflowConfigRequest(BaseModel):
         le=2.0,
         description="Default temperature parameter for LLM generation"
     )
-    agent_models: Optional[Dict[str, str]] = Field(
+    agent_models: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Per-agent model configuration (e.g., {'generation': 'gemini-2.0-flash-exp'})"
+        description="Per-agent model configuration (e.g., {'generation': {'model': 'gemini-2.0-flash-exp', 'temperature': 0.7}})"
     )
 
 

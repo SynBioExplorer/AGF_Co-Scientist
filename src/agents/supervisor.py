@@ -679,14 +679,13 @@ Respond with ONLY the JSON object."""
 
         if task.agent_type == AgentType.GENERATION:
             method = GenerationMethod(params.get("method", "literature_exploration"))
-            use_web_search = params.get("use_web_search", False)
+            use_literature_expansion = params.get("use_web_search", False)
 
-            # Run sync agent in thread pool to avoid blocking event loop
-            hypothesis = await asyncio.to_thread(
-                agent.execute,
+            # GenerationAgent.execute is async
+            hypothesis = await agent.execute(
                 research_goal=research_goal,
                 method=method,
-                use_web_search=use_web_search
+                use_literature_expansion=use_literature_expansion
             )
 
             # Safety review before storing hypothesis (mandatory)
@@ -753,9 +752,8 @@ Respond with ONLY the JSON object."""
             hypothesis = await self.storage.get_hypothesis(hypothesis_id)
             if hypothesis:
                 review_type = ReviewType(params.get("review_type", "initial"))
-                # Run sync agent in thread pool to avoid blocking event loop
-                review = await asyncio.to_thread(
-                    agent.execute,
+                # ReflectionAgent.execute is async
+                review = await agent.execute(
                     hypothesis=hypothesis,
                     review_type=review_type
                 )

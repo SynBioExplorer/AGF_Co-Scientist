@@ -39,7 +39,14 @@ export const HypothesesPage: React.FC = () => {
   const handleSelectHypothesis = async (id: string) => {
     try {
       const detail = await getHypothesisDetail(id);
-      setSelectedHypothesis(detail);
+      // API returns { hypothesis, reviews, tournament_record, evolution_history }
+      // Flatten into the HypothesisDetailType shape
+      setSelectedHypothesis({
+        ...detail.hypothesis,
+        reviews: detail.reviews || [],
+        tournament_record: detail.tournament_record || { wins: 0, losses: 0, win_rate: 0, total_matches: 0 },
+        evolution_history: detail.evolution_history || [],
+      });
     } catch (error) {
       console.error('Failed to load hypothesis detail:', error);
     }

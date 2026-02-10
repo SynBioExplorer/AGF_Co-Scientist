@@ -8,7 +8,6 @@ Settings are stored in .runtime_settings.json (gitignored) to avoid modifying .e
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict
-from src.config import get_settings
 import json
 import os
 
