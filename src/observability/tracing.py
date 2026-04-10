@@ -2,7 +2,7 @@
 
 This module provides decorators and context managers for tracing agent
 executions and LLM calls. Tracing is automatically enabled when
-LANGCHAIN_TRACING_V2=true is set in the environment.
+LANGSMITH_TRACING=true (or legacy LANGCHAIN_TRACING_V2=true) is set.
 """
 
 import os
@@ -14,18 +14,32 @@ import structlog
 
 logger = structlog.get_logger()
 
-# Check if LangSmith is enabled via environment variable
-LANGSMITH_ENABLED = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
+# Check if LangSmith is enabled via environment variable (new or legacy)
+LANGSMITH_ENABLED = (
+    os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
+    or os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
+)
+
+# Sync legacy env vars from new LANGSMITH_ vars so langchain internals see them
+if LANGSMITH_ENABLED:
+    if os.getenv("LANGSMITH_API_KEY") and not os.getenv("LANGCHAIN_API_KEY"):
+        os.environ["LANGCHAIN_API_KEY"] = os.environ["LANGSMITH_API_KEY"]
+    if os.getenv("LANGSMITH_ENDPOINT") and not os.getenv("LANGCHAIN_ENDPOINT"):
+        os.environ["LANGCHAIN_ENDPOINT"] = os.environ["LANGSMITH_ENDPOINT"]
+    if os.getenv("LANGSMITH_PROJECT") and not os.getenv("LANGCHAIN_PROJECT"):
+        os.environ["LANGCHAIN_PROJECT"] = os.environ["LANGSMITH_PROJECT"]
+    # Ensure LANGCHAIN_TRACING_V2 is set for langchain internals
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
 
 # Import LangSmith only if enabled to avoid import errors
 if LANGSMITH_ENABLED:
     try:
         from langsmith import Client
-        from langchain.callbacks.tracers import LangChainTracer
+        from langchain_core.tracers.langchain import LangChainTracer
 
         # Initialize LangSmith client
         langsmith_client = Client()
-        logger.info("langsmith_enabled", project=os.getenv("LANGCHAIN_PROJECT", "ai-coscientist"))
+        logger.info("langsmith_enabled", project=os.getenv("LANGSMITH_PROJECT", os.getenv("LANGCHAIN_PROJECT", "ai-coscientist")))
     except ImportError as e:
         logger.warning(
             "langsmith_import_failed",

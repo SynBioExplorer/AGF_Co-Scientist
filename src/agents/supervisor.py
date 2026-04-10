@@ -566,6 +566,7 @@ Respond with ONLY the JSON object."""
                         )
                         if not task:
                             continue
+                        self.task_queue.add_task(task)  # Register so update_task_status can find it
                     phase_tasks.append(task)
 
             if not phase_tasks:
