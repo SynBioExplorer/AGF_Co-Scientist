@@ -454,12 +454,265 @@ class GenerationAgent(BaseAgent):
             )
             return ""
 
+    async def _generate_via_debate(
+        self,
+        research_goal: ResearchGoal,
+        literature_context: str = "",
+    ) -> Hypothesis:
+        """Generate a hypothesis through simulated multi-expert scientific debate.
+
+        Paper Section 3.3.1: "simulates scientific debates among experts by
+        employing self-critique and self-play techniques. These debates typically
+        involve multiple turns of conversations leading to a refined hypothesis."
+
+        Args:
+            research_goal: Research goal to address.
+            literature_context: Literature context from prior search.
+
+        Returns:
+            Hypothesis refined through multi-expert debate.
+        """
+        from src.utils.json_parser import parse_llm_json
+
+        expert_roles = [
+            ("Domain Expert",
+             f"You are a leading domain expert on: {research_goal.description[:200]}. "
+             "You bring mechanistic insights, cite relevant prior work, and propose concrete hypotheses."),
+            ("Methodologist",
+             "You are an experimental methodologist. You evaluate proposals for feasibility, "
+             "statistical power, appropriate controls, and potential confounders."),
+            ("Devil's Advocate",
+             "You are a critical reviewer who challenges assumptions, identifies logical gaps, "
+             "highlights failure modes, and pushes toward more robust and novel hypotheses."),
+        ]
+
+        transcript = ""
+        num_turns = 3
+
+        for turn in range(1, num_turns + 1):
+            for name, persona in expert_roles:
+                turn_prompt = f"""{persona}
+
+Turn {turn}/{num_turns} of a scientific debate to develop a novel hypothesis.
+
+Research Goal: {research_goal.description}
+{f"Literature Context: {literature_context[:3000]}" if literature_context else ""}
+{f"DEBATE SO FAR:{transcript}" if transcript else "This is the opening. No prior discussion."}
+
+As {name}, contribute:
+- If early: propose or refine hypothesis ideas
+- Build on strengths, challenge weaknesses from prior speakers
+- In later turns: converge toward a refined, testable hypothesis
+
+Respond as {name}:"""
+
+                response = await self.llm_client.ainvoke(turn_prompt)
+                transcript += f"\n\n--- Turn {turn}, {name} ---\n{response}"
+
+        # Synthesis
+        synthesis_prompt = f"""Synthesize this multi-expert debate into a single refined hypothesis.
+
+Research Goal: {research_goal.description}
+
+FULL DEBATE:
+{transcript}
+
+Extract the strongest ideas, address criticisms, and produce a coherent hypothesis.
+
+CRITICAL: The hypothesis MUST be specifically about: {research_goal.description}
+Do NOT propose ideas about unrelated topics, organisms, or fields.
+
+Return ONLY valid JSON:
+{{
+    "title": "Brief hypothesis title",
+    "statement": "Full hypothesis statement",
+    "rationale": "Scientific reasoning from debate",
+    "mechanism": "Proposed mechanism",
+    "experimental_protocol": {{
+        "objective": "What the experiment tests",
+        "methodology": "Experimental approach",
+        "controls": ["Control 1"],
+        "expected_outcomes": ["Outcome 1"],
+        "success_criteria": "What constitutes success"
+    }},
+    "citations": [{{"title": "Paper", "doi": "", "relevance": "Why relevant"}}]
+}}"""
+
+        synthesis = await self.llm_client.ainvoke(synthesis_prompt)
+        data = parse_llm_json(synthesis, agent_name="GenerationAgent-Debate")
+
+        protocol_data = data.get("experimental_protocol", {})
+        # Resilient protocol parsing for debate path
+        def _coerce(v, as_list):
+            if as_list and isinstance(v, str):
+                return [v]
+            if not as_list and isinstance(v, list):
+                return "\n".join(str(x) for x in v)
+            return v
+
+        hypothesis = Hypothesis(
+            id=generate_hypothesis_id(),
+            research_goal_id=research_goal.id,
+            title=data.get("title", "Debate-generated hypothesis"),
+            summary=data.get("title", ""),
+            hypothesis_statement=data.get("statement", ""),
+            rationale=data.get("rationale", ""),
+            mechanism=data.get("mechanism"),
+            experimental_protocol=ExperimentalProtocol(
+                objective=_coerce(protocol_data.get("objective", ""), as_list=False),
+                methodology=_coerce(protocol_data.get("methodology", ""), as_list=False),
+                controls=_coerce(protocol_data.get("controls", []), as_list=True),
+                expected_outcomes=_coerce(protocol_data.get("expected_outcomes", []), as_list=True),
+                success_criteria=_coerce(protocol_data.get("success_criteria", ""), as_list=False)
+            ),
+            literature_citations=[
+                Citation(**c) for c in data.get("citations", [])
+                if isinstance(c, dict) and "title" in c
+            ],
+            generation_method=GenerationMethod.SIMULATED_DEBATE,
+            elo_rating=1200.0
+        )
+
+        self.logger.info(
+            "Debate synthesis complete",
+            hypothesis_id=hypothesis.id,
+            title=hypothesis.title,
+        )
+        return hypothesis
+
+    async def _generate_via_expansion(
+        self,
+        research_goal: ResearchGoal,
+        research_overview: Optional[object] = None,
+        meta_review: Optional[object] = None,
+        existing_titles: Optional[list] = None,
+    ) -> Optional[Hypothesis]:
+        """Generate a hypothesis via research expansion.
+
+        Paper Section 3.3.1: 'reviews existing hypotheses and the research
+        overview and feedback provided by the Meta-review agent... to inform
+        additional exploration directions in the research hypothesis space.'
+
+        Returns None if no research overview is available yet (early iterations).
+        """
+        if research_overview is None:
+            self.logger.info("research_expansion_skipped_no_overview")
+            return None
+
+        from src.utils.json_parser import parse_llm_json
+
+        # Build compact views of the overview, meta-review, and existing work
+        directions_block = ""
+        if hasattr(research_overview, 'research_directions'):
+            dir_lines = []
+            for d in (research_overview.research_directions or [])[:10]:
+                direction = getattr(d, 'direction', None) or getattr(d, 'title', None) or str(d)
+                justification = getattr(d, 'justification', '')
+                dir_lines.append(f"- {direction}: {justification[:200]}")
+            directions_block = "\n".join(dir_lines) if dir_lines else "No directions listed"
+
+        meta_block = ""
+        if meta_review is not None:
+            opps = getattr(meta_review, 'improvement_opportunities', []) or []
+            if opps:
+                meta_block = "Improvement opportunities from meta-review:\n" + \
+                    "\n".join(f"- {o}" for o in opps[:5])
+
+        titles_block = ""
+        if existing_titles:
+            titles_block = "Existing hypothesis titles (avoid repeating these directions):\n" + \
+                "\n".join(f"- {t}" for t in existing_titles[:25])
+
+        prompt = f"""You are generating a NEW hypothesis for a research goal via RESEARCH EXPANSION.
+
+Research Goal: {research_goal.description}
+
+Preferences: {', '.join(research_goal.preferences) if research_goal.preferences else 'Standard scientific rigor'}
+
+Research Overview Directions:
+{directions_block}
+
+{meta_block}
+
+{titles_block}
+
+YOUR TASK:
+1. Identify ONE research direction from the overview that is LEAST explored by the existing
+   hypotheses above, or is only mentioned in the meta-review improvement opportunities.
+2. Generate a NOVEL hypothesis in that under-explored direction.
+3. The hypothesis MUST directly address the research goal and MUST NOT duplicate any
+   existing hypothesis titled above.
+
+Return ONLY valid JSON:
+{{
+    "title": "Brief hypothesis title",
+    "statement": "Full hypothesis statement",
+    "rationale": "Why this direction is under-explored and worth pursuing",
+    "mechanism": "Proposed mechanism",
+    "experimental_protocol": {{
+        "objective": "What the experiment tests",
+        "methodology": "Experimental approach",
+        "controls": ["Control 1"],
+        "expected_outcomes": ["Outcome 1"],
+        "success_criteria": "What constitutes success"
+    }},
+    "citations": [{{"title": "Paper", "doi": "", "relevance": "Why relevant"}}],
+    "chosen_direction": "Which direction from the overview this explores"
+}}"""
+
+        response = await self.llm_client.ainvoke(prompt)
+        data = parse_llm_json(response, agent_name="GenerationAgent-Expansion")
+
+        # Resilient protocol parsing (mirror the debate path)
+        protocol_data = data.get("experimental_protocol", {})
+        def _coerce(v, as_list):
+            if as_list and isinstance(v, str):
+                return [v]
+            if not as_list and isinstance(v, list):
+                return "\n".join(str(x) for x in v)
+            return v
+
+        hypothesis = Hypothesis(
+            id=generate_hypothesis_id(),
+            research_goal_id=research_goal.id,
+            title=data.get("title", "Expansion-generated hypothesis"),
+            summary=data.get("title", ""),
+            hypothesis_statement=data.get("statement", ""),
+            rationale=data.get("rationale", ""),
+            mechanism=data.get("mechanism"),
+            experimental_protocol=ExperimentalProtocol(
+                objective=_coerce(protocol_data.get("objective", ""), as_list=False),
+                methodology=_coerce(protocol_data.get("methodology", ""), as_list=False),
+                controls=_coerce(protocol_data.get("controls", []), as_list=True),
+                expected_outcomes=_coerce(protocol_data.get("expected_outcomes", []), as_list=True),
+                success_criteria=_coerce(protocol_data.get("success_criteria", ""), as_list=False)
+            ),
+            literature_citations=[
+                Citation(**c) for c in data.get("citations", [])
+                if isinstance(c, dict) and c.get("title")
+            ],
+            generation_method=GenerationMethod.RESEARCH_EXPANSION,
+            elo_rating=1200.0
+        )
+
+        self.logger.info(
+            "research_expansion_complete",
+            hypothesis_id=hypothesis.id,
+            title=hypothesis.title,
+            chosen_direction=data.get("chosen_direction", "")[:100],
+        )
+        return hypothesis
+
     @trace_agent("GenerationAgent")
     async def execute(
         self,
         research_goal: ResearchGoal,
         method: GenerationMethod = GenerationMethod.LITERATURE_EXPLORATION,
-        use_literature_expansion: bool = True
+        use_literature_expansion: bool = True,
+        context_instructions: str = "",
+        research_overview: Optional[object] = None,
+        meta_review: Optional[object] = None,
+        existing_titles: Optional[list] = None,
     ) -> Hypothesis:
         """Generate a hypothesis
 
@@ -530,13 +783,39 @@ class GenerationAgent(BaseAgent):
                 )
                 literature_context = self._search_tavily_fallback(research_goal)
 
-        # Format prompt
-        method_str = "literature" if method == GenerationMethod.LITERATURE_EXPLORATION else "debate"
+        # Route to debate pathway if requested
+        if method == GenerationMethod.SIMULATED_DEBATE:
+            hypothesis = await self._generate_via_debate(
+                research_goal=research_goal,
+                literature_context=literature_context,
+            )
+            if use_literature_expansion:
+                hypothesis = await self._validate_citations(hypothesis, citation_graph)
+            return hypothesis
+
+        # Route to research expansion pathway if requested
+        if method == GenerationMethod.RESEARCH_EXPANSION:
+            hypothesis = await self._generate_via_expansion(
+                research_goal=research_goal,
+                research_overview=research_overview,
+                meta_review=meta_review,
+                existing_titles=existing_titles,
+            )
+            if hypothesis is not None:
+                if use_literature_expansion:
+                    hypothesis = await self._validate_citations(hypothesis, citation_graph)
+                return hypothesis
+            # Fall through to literature exploration if expansion unavailable
+            self.logger.info("falling_back_to_literature_exploration")
+
+        # Literature exploration pathway
+        method_str = "literature"
         prompt = prompt_manager.format_generation_prompt(
             goal=research_goal.description,
             preferences=research_goal.preferences,
             method=method_str,
-            articles_with_reasoning=literature_context
+            articles_with_reasoning=literature_context,
+            instructions=context_instructions
         )
 
         # Add structured output instruction
@@ -578,8 +857,26 @@ Respond with ONLY the JSON object, no additional text."""
                 hypothesis_statement=data["statement"],
                 rationale=data["rationale"],
                 mechanism=data.get("mechanism"),
-                experimental_protocol=ExperimentalProtocol(**data["experimental_protocol"]),
-                literature_citations=[Citation(**c) for c in data.get("citations", [])],
+                experimental_protocol=ExperimentalProtocol(
+                    **{
+                        **{"objective": "", "methodology": "", "controls": [],
+                           "expected_outcomes": [], "success_criteria": ""},
+                        **{
+                            k: (
+                                # List fields: wrap string as list
+                                [v] if isinstance(v, str) and k in ("controls", "expected_outcomes")
+                                # String fields: join list as string
+                                else "\n".join(str(x) for x in v) if isinstance(v, list) and k in ("objective", "methodology", "success_criteria")
+                                else v
+                            )
+                            for k, v in data.get("experimental_protocol", {}).items()
+                        }
+                    }
+                ),
+                literature_citations=[
+                    Citation(**c) for c in data.get("citations", [])
+                    if isinstance(c, dict) and c.get("title")
+                ],
                 generation_method=method,
                 elo_rating=1200.0  # Initial Elo per Google paper (page 11)
             )

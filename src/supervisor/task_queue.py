@@ -98,7 +98,7 @@ class TaskQueue:
                 neg_priority, counter, task_id, task = heapq.heappop(self._queue)
                 # Skip if task was already removed or not pending
                 if task_id in self._tasks and task.status == "pending":
-                    del self._tasks[task_id]
+                    # Keep task in _tasks dict so update_task_status can find it
                     logger.info(
                         "task_retrieved",
                         task_id=task.id,
@@ -121,7 +121,7 @@ class TaskQueue:
 
             if task.agent_type == agent_type:
                 selected_task = task
-                del self._tasks[task_id]
+                # Keep task in _tasks dict so update_task_status can find it
                 break
             else:
                 temp.append(item)

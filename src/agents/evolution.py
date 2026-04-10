@@ -33,7 +33,9 @@ class EvolutionAgent(BaseAgent):
         hypothesis: Hypothesis,
         strategy: EvolutionStrategy,
         reviews: Optional[list[Review]] = None,
-        similar_hypotheses: Optional[list[Hypothesis]] = None
+        similar_hypotheses: Optional[list[Hypothesis]] = None,
+        context_guidance: str = "",
+        research_goal_description: str = ""
     ) -> Hypothesis:
         """Evolve a hypothesis using specified strategy
 
@@ -69,8 +71,22 @@ class EvolutionAgent(BaseAgent):
                 hypothesis=self._format_hypothesis(hypothesis),
                 strategy="out_of_box",
                 goal=hypothesis.research_goal_id,
-                similar_hypotheses=self._format_hypotheses(similar_hypotheses) if similar_hypotheses else ""
+                hypotheses=self._format_hypotheses(similar_hypotheses) if similar_hypotheses else "No similar hypotheses available"
             )
+
+        # Anchor to research goal to prevent off-topic drift
+        if research_goal_description:
+            prompt = f"""RESEARCH GOAL: {research_goal_description}
+Your evolved hypothesis MUST directly address this research goal. Do NOT propose ideas about unrelated topics or organisms.
+
+{prompt}"""
+
+        # Add context memory guidance if available
+        if context_guidance:
+            prompt = f"""{prompt}
+
+{context_guidance}
+"""
 
         # Add structured output instruction
         structured_prompt = f"""{prompt}
@@ -109,21 +125,42 @@ Respond with ONLY the JSON object, no additional text."""
 
             data = json.loads(json_str)
 
-            # Build evolved Hypothesis object
+            # Build evolved Hypothesis object with resilient protocol parsing
+            proto = data.get("experimental_protocol", {})
+
+            # List fields: wrap strings as single-item lists
+            for k in ("controls", "expected_outcomes"):
+                if isinstance(proto.get(k), str):
+                    proto[k] = [proto[k]]
+
+            # String fields: join lists into strings
+            for k in ("objective", "methodology", "success_criteria"):
+                if isinstance(proto.get(k), list):
+                    proto[k] = "\n".join(str(x) for x in proto[k])
+
+            # Defaults
+            methodology = proto.get("methodology", "") or ""
+            proto.setdefault("objective", methodology[:200] if methodology else "Test evolved hypothesis")
+            proto.setdefault("methodology", "")
+            proto.setdefault("controls", [])
+            proto.setdefault("expected_outcomes", [])
+            proto.setdefault("success_criteria", "")
+
             evolved_hypothesis = Hypothesis(
                 id=generate_hypothesis_id(),
                 research_goal_id=hypothesis.research_goal_id,
-                title=data["title"],
+                title=data.get("title", hypothesis.title),
                 summary=hypothesis.summary,  # Keep original summary
-                hypothesis_statement=data["statement"],
-                rationale=data["rationale"],
-                mechanism=data["mechanism"],
-                experimental_protocol=ExperimentalProtocol(**data["experimental_protocol"]),
-                citations=[Citation(**c) for c in data.get("citations", [])],
+                hypothesis_statement=data.get("statement", hypothesis.hypothesis_statement),
+                rationale=data.get("rationale", hypothesis.rationale),
+                mechanism=data.get("mechanism", hypothesis.mechanism),
+                experimental_protocol=ExperimentalProtocol(**proto),
+                literature_citations=[
+                    Citation(**c) for c in data.get("citations", [])
+                    if isinstance(c, dict) and c.get("title")
+                ],
                 generation_method=hypothesis.generation_method,
-                parent_hypothesis_id=hypothesis.id,  # Track evolution lineage
-                evolution_strategy=strategy,
-                evolution_rationale=data.get("evolution_rationale", ""),
+                parent_hypothesis_ids=[hypothesis.id],  # Track evolution lineage
                 elo_rating=hypothesis.elo_rating  # Inherit parent's Elo
             )
 

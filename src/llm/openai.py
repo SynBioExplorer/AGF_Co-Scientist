@@ -46,12 +46,15 @@ class OpenAIClient(BaseLLMClient):
 
         self.agent_name = agent_name
 
-        if not settings.openai_api_key:
-            raise LLMClientError("OpenAI API key not configured in .env")
+        # Prefer env var (set per-request by API middleware) over frozen settings
+        import os
+        api_key = os.environ.get("OPENAI_API_KEY") or settings.openai_api_key
+        if not api_key:
+            raise LLMClientError("OpenAI API key not configured")
 
         self.llm = ChatOpenAI(
             model=model,
-            api_key=settings.openai_api_key,
+            api_key=api_key,
             temperature=0.7,
             max_tokens=8192,
             callbacks=self.callbacks  # Add tracing callbacks

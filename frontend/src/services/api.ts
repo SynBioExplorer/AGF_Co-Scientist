@@ -12,6 +12,12 @@ const api = axios.create({
 api.interceptors.request.use((config) => {
   const settings = useSettingsStore.getState();
 
+  // Always send provider and model so the backend uses the frontend selection
+  config.headers['X-LLM-Provider'] = settings.llmProvider;
+  if (settings.defaultModel) {
+    config.headers['X-Default-Model'] = settings.defaultModel;
+  }
+
   // Add API keys based on provider
   if (settings.llmProvider === 'google' && settings.googleApiKey) {
     config.headers['X-Google-API-Key'] = settings.googleApiKey;

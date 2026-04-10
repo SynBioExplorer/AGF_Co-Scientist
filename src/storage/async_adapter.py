@@ -63,6 +63,7 @@ class AsyncStorageAdapter:
         self._checkpoints: Dict[str, List[ContextMemory]] = {}
         self._feedback: Dict[str, List[ScientistFeedback]] = {}
         self._chat_messages: Dict[str, List[ChatMessage]] = {}
+        self._observation_reviews: Dict[str, Any] = {}  # keyed by hypothesis_id
         self._connected = False
 
     # =========================================================================
@@ -437,6 +438,31 @@ class AsyncStorageAdapter:
     async def get_research_overview(self, goal_id: str) -> Optional[ResearchOverview]:
         """Get research overview for a research goal."""
         return self._research_overviews.get(goal_id)
+
+    # =========================================================================
+    # Observation Reviews (Phase 6 Week 3)
+    # =========================================================================
+
+    async def add_observation_review(self, review: Any) -> Any:
+        """Store an observation review, keyed by hypothesis_id."""
+        self._observation_reviews[review.hypothesis_id] = review
+        return review
+
+    async def save_observation_review(self, review: Any) -> Any:
+        """Alias for add_observation_review."""
+        return await self.add_observation_review(review)
+
+    async def get_observation_review(self, hypothesis_id: str) -> Optional[Any]:
+        """Get observation review for a hypothesis."""
+        return self._observation_reviews.get(hypothesis_id)
+
+    async def get_observation_reviews_by_goal(self, goal_id: str) -> List[Any]:
+        """Get all observation reviews for a research goal."""
+        hyp_ids = {h.id for h in self._hypotheses.values() if h.research_goal_id == goal_id}
+        return [
+            r for r in self._observation_reviews.values()
+            if r.hypothesis_id in hyp_ids
+        ]
 
     # =========================================================================
     # Agent Tasks

@@ -81,8 +81,7 @@ def _select_from_reviews(reviews: List[Review]) -> Optional[EvolutionStrategy]:
 
     # Combine all review content for keyword analysis
     review_text = " ".join(
-        r.content.lower() if hasattr(r, 'content') and r.content else
-        (r.rationale.lower() if hasattr(r, 'rationale') and r.rationale else "")
+        r.rationale.lower() if hasattr(r, 'rationale') and r.rationale else ""
         for r in reviews
     )
 

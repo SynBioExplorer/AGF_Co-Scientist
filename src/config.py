@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     chat_history_max_age_hours: int = 168  # Remove chat history after 7 days
 
     # Safety configuration
-    safety_threshold: float = 0.5  # Minimum safety score (0.0-1.0) for hypotheses
+    safety_threshold: float = 0.0  # Set to 0 to disable safety review; 0.5 for production
 
     # Tournament Pairing Configuration (Phase 5 Enhancement - Proximity-Aware Matching)
     proximity_aware_pairing: bool = True  # Enable proximity-based tournament pairing

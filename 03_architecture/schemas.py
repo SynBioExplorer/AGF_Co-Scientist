@@ -728,6 +728,16 @@ class ContextMemory(BaseModel):
         default_factory=list, description="IDs of scientist-contributed hypotheses"
     )
 
+    # Accumulated context for self-improving loop (Paper Section 3.1)
+    accumulated_insights: list[str] = Field(
+        default_factory=list,
+        description="Key insights from meta-reviews, accumulated across iterations"
+    )
+    explored_directions: list[str] = Field(
+        default_factory=list,
+        description="Hypothesis titles already explored (to avoid repetition)"
+    )
+
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 

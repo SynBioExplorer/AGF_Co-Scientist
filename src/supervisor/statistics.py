@@ -155,10 +155,13 @@ class SupervisorStatistics:
         convergence means the top hypotheses have stabilized and further
         tournaments are unlikely to change the rankings significantly.
 
-        Convergence is calculated as:
-        1.0 - (Elo standard deviation / 100.0), clamped to [0, 1]
+        The score combines two factors:
+        1. Elo stability: low std deviation among rated hypotheses
+        2. Match coverage: what fraction of hypotheses have been tested
 
-        Lower standard deviation = higher convergence.
+        Without the coverage factor, hypotheses that are all at the
+        default 1200 Elo (untested) would appear "converged" when they
+        have actually never been matched.
 
         Args:
             hypotheses: Top hypotheses to analyze.
@@ -174,9 +177,19 @@ class SupervisorStatistics:
         variance = sum((e - mean_elo) ** 2 for e in elos) / len(elos)
         std_dev = math.sqrt(variance)
 
-        # Convergence = 1 - (std_dev / 100), clamped to [0, 1]
-        # Higher std_dev = lower convergence (ratings still changing)
-        convergence = max(0.0, min(1.0, 1.0 - std_dev / 100.0))
+        # Elo stability: 1 - (std_dev / 100), clamped to [0, 1]
+        elo_stability = max(0.0, min(1.0, 1.0 - std_dev / 100.0))
+
+        # Match coverage: fraction of hypotheses that have moved off
+        # the default 1200 rating (i.e. have actually been matched).
+        default_elo = 1200.0
+        matched_count = sum(1 for e in elos if abs(e - default_elo) > 1.0)
+        coverage = matched_count / len(elos)
+
+        # True convergence requires both stable ratings AND sufficient
+        # match coverage. If most hypotheses are untested, convergence
+        # stays low regardless of how uniform the ratings look.
+        convergence = elo_stability * coverage
 
         return convergence
 
@@ -398,49 +411,40 @@ class SupervisorStatistics:
         Returns:
             Recommended weights per agent type (sum to ~1.0).
         """
-        weights: Dict[AgentType, float] = {}
+        # Base weights - MUST match SupervisorAgent._initialize_weights
+        base: Dict[AgentType, float] = {
+            AgentType.GENERATION: 0.25,
+            AgentType.REFLECTION: 0.25,
+            AgentType.RANKING: 0.20,
+            AgentType.EVOLUTION: 0.13,
+            AgentType.OBSERVATION_REVIEW: 0.08,
+            AgentType.PROXIMITY: 0.05,
+            AgentType.META_REVIEW: 0.04,
+        }
 
-        # Base weights
-        base_generation = 0.4
-        base_reflection = 0.2
-        base_ranking = 0.2
-        base_evolution = 0.1
-        base_proximity = 0.05
-        base_meta_review = 0.05
+        weights: Dict[AgentType, float] = dict(base)
 
         # Adjust generation weight based on success rate
         # Lower success rate -> reduce generation (focus on quality)
         if stats.generation_success_rate < 0.5:
-            weights[AgentType.GENERATION] = base_generation * 0.5
-        else:
-            weights[AgentType.GENERATION] = base_generation
+            weights[AgentType.GENERATION] = base[AgentType.GENERATION] * 0.5
 
         # Adjust reflection weight based on pending reviews
         # More pending reviews -> increase reflection weight
         if stats.hypotheses_pending_review > 5:
-            weights[AgentType.REFLECTION] = base_reflection * 1.5
-        else:
-            weights[AgentType.REFLECTION] = base_reflection
+            weights[AgentType.REFLECTION] = base[AgentType.REFLECTION] * 1.5
 
         # Adjust ranking weight based on tournament progress
         # High convergence -> reduce ranking (tournament is stable)
         if stats.tournament_convergence_score > 0.8:
-            weights[AgentType.RANKING] = base_ranking * 0.5
-        else:
-            weights[AgentType.RANKING] = base_ranking
+            weights[AgentType.RANKING] = base[AgentType.RANKING] * 0.5
 
         # Adjust evolution weight based on improvement rate
         # Low improvement rate -> reduce evolution (not working well)
         if stats.evolution_improvement_rate < 0.3:
-            weights[AgentType.EVOLUTION] = 0.0
+            weights[AgentType.EVOLUTION] = base[AgentType.EVOLUTION] * 0.5
         elif stats.evolution_improvement_rate > 0.6:
-            weights[AgentType.EVOLUTION] = base_evolution * 1.5
-        else:
-            weights[AgentType.EVOLUTION] = base_evolution
-
-        # Proximity and meta-review stay constant
-        weights[AgentType.PROXIMITY] = base_proximity
-        weights[AgentType.META_REVIEW] = base_meta_review
+            weights[AgentType.EVOLUTION] = base[AgentType.EVOLUTION] * 1.5
 
         # Normalize weights to sum to 1.0
         total = sum(weights.values())

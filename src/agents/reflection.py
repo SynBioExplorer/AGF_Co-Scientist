@@ -223,13 +223,146 @@ class ReflectionAgent(BaseAgent):
 
         return "\n\n".join(parts) if parts else ""
 
+    async def _deep_verification_review(
+        self,
+        hypothesis: Hypothesis,
+    ) -> "DeepVerificationReview":
+        """Decompose hypothesis into assumptions and independently verify each.
+
+        Paper Section 3.3.2: "decomposes the hypothesis into constituent
+        assumptions, each broken into fundamental sub-assumptions,
+        decontextualized, and independently evaluated for correctness."
+
+        Args:
+            hypothesis: Hypothesis to deeply verify.
+
+        Returns:
+            DeepVerificationReview with verified/invalidated assumptions.
+        """
+        from schemas import Assumption, DeepVerificationReview
+
+        prompt = f"""You are performing a Deep Verification Review of a scientific hypothesis.
+
+HYPOTHESIS: {hypothesis.title}
+STATEMENT: {hypothesis.hypothesis_statement}
+RATIONALE: {hypothesis.rationale}
+MECHANISM: {hypothesis.mechanism or 'Not specified'}
+
+Perform the following analysis:
+1. Decompose this hypothesis into 3-7 CORE ASSUMPTIONS that must hold true.
+2. For each core assumption, identify 2-4 TESTABLE SUB-ASSUMPTIONS.
+   Decontextualize each sub-assumption so it can be evaluated independently.
+3. Evaluate each sub-assumption: is it valid, invalid, or uncertain?
+   Provide a confidence score (0.0-1.0) and supporting evidence.
+4. For each assumption, classify whether it is FUNDAMENTAL (core hypothesis
+   collapses if wrong) or NON-FUNDAMENTAL (can be refined without invalidating
+   the core idea).
+
+Return ONLY valid JSON:
+{{
+  "assumptions": [
+    {{
+      "statement": "Core assumption text",
+      "is_fundamental": true,
+      "sub_assumptions": [
+        {{
+          "statement": "Testable sub-assumption",
+          "verification_status": "valid|invalid|uncertain",
+          "confidence": 0.85,
+          "evidence": ["reason 1", "reason 2"]
+        }}
+      ]
+    }}
+  ],
+  "overall_valid": true,
+  "quality_score": 0.8,
+  "strengths": ["strength 1"],
+  "weaknesses": ["weakness 1"],
+  "invalidation_reasons": ["reason if any assumptions are fundamentally invalid"]
+}}"""
+
+        response = await self.llm_client.ainvoke(prompt)
+
+        # Parse response
+        from src.utils.json_parser import parse_llm_json
+        data = parse_llm_json(response, agent_name="ReflectionAgent-DeepVerification")
+
+        # Build Assumption objects
+        verified = []
+        invalidated = []
+        invalidation_reasons = data.get("invalidation_reasons", [])
+
+        for a_data in data.get("assumptions", []):
+            sub_assumptions = []
+            has_fundamental_failure = False
+
+            for sa_data in a_data.get("sub_assumptions", []):
+                sa = Assumption(
+                    id=generate_id("sa"),
+                    statement=sa_data["statement"],
+                    verification_status=sa_data.get("verification_status", "uncertain"),
+                    evidence=sa_data.get("evidence", []),
+                    is_fundamental=a_data.get("is_fundamental", True),
+                )
+                sub_assumptions.append(sa)
+                if sa.verification_status == "invalid" and a_data.get("is_fundamental", True):
+                    has_fundamental_failure = True
+
+            assumption = Assumption(
+                id=generate_id("asmp"),
+                statement=a_data["statement"],
+                is_fundamental=a_data.get("is_fundamental", True),
+                sub_assumptions=sub_assumptions,
+                verification_status="invalid" if has_fundamental_failure else "valid",
+            )
+
+            if has_fundamental_failure:
+                invalidated.append(assumption)
+            else:
+                verified.append(assumption)
+
+        # Hypothesis passes if no fundamental assumptions are invalidated
+        passed = len(invalidated) == 0
+        quality_score = data.get("quality_score", 0.7 if passed else 0.3)
+
+        review = DeepVerificationReview(
+            id=generate_id("rev"),
+            hypothesis_id=hypothesis.id,
+            review_type=ReviewType.DEEP_VERIFICATION,
+            correctness_score=quality_score,
+            quality_score=quality_score,
+            novelty_score=None,
+            testability_score=None,
+            safety_score=None,
+            strengths=data.get("strengths", []),
+            weaknesses=data.get("weaknesses", []),
+            suggestions=[],
+            failure_modes=[],
+            passed=passed,
+            rationale=f"Deep verification: {len(verified)} verified, {len(invalidated)} invalidated assumptions",
+            verified_assumptions=verified,
+            invalidated_assumptions=invalidated,
+            invalidation_reasons=invalidation_reasons,
+        )
+
+        self.logger.info(
+            "Deep verification complete",
+            hypothesis_id=hypothesis.id,
+            passed=passed,
+            verified=len(verified),
+            invalidated=len(invalidated),
+        )
+
+        return review
+
     @trace_agent("ReflectionAgent")
     async def execute(
         self,
         hypothesis: Hypothesis,
         review_type: ReviewType = ReviewType.INITIAL,
         article: str = "",
-        use_refutation_search: bool = True
+        use_refutation_search: bool = True,
+        context_guidance: str = ""
     ) -> Review:
         """Review a hypothesis
 
@@ -280,6 +413,10 @@ class ReflectionAgent(BaseAgent):
                     error=str(e)
                 )
 
+        # Deep verification has its own complete flow
+        if review_type == ReviewType.DEEP_VERIFICATION:
+            return await self._deep_verification_review(hypothesis)
+
         # Format prompt based on review type
         if review_type == ReviewType.OBSERVATION:
             prompt = prompt_manager.format_reflection_prompt(
@@ -287,6 +424,10 @@ class ReflectionAgent(BaseAgent):
                 hypothesis=self._format_hypothesis(hypothesis),
                 article=article
             )
+        elif review_type == ReviewType.FULL:
+            # Paper Section 3.3.2: Full review leverages literature search
+            # and applies a stricter scoring rubric than initial review.
+            prompt = self._create_full_review_prompt(hypothesis)
         else:
             # For initial review, just evaluate the hypothesis directly
             prompt = self._create_initial_review_prompt(hypothesis)
@@ -302,6 +443,13 @@ When scoring this hypothesis, carefully consider:
 1. Any contradictory evidence found in the literature
 2. Whether supporting citations have been retracted or corrected
 3. The strength and recency of contradictory studies
+"""
+
+        # Add context memory guidance if available
+        if context_guidance:
+            prompt = f"""{prompt}
+
+{context_guidance}
 """
 
         # Add structured output instruction
@@ -347,8 +495,8 @@ Respond with ONLY the JSON object, no additional text."""
                 id=generate_review_id(),
                 hypothesis_id=hypothesis.id,
                 review_type=review_type,
-                passed=data["passed"],
-                rationale=data["rationale"],
+                passed=data.get("passed", True),
+                rationale=data.get("rationale", "No rationale provided"),
                 correctness_score=data.get("correctness_score"),
                 quality_score=data.get("quality_score"),
                 novelty_score=data.get("novelty_score"),
@@ -409,4 +557,71 @@ For each criterion, provide:
 - Constructive suggestions for improvement
 
 Determine if the hypothesis PASSES this initial review (true/false) and provide detailed rationale.
+"""
+
+    def _create_full_review_prompt(self, hypothesis: Hypothesis) -> str:
+        """Create prompt for FULL review - stricter than initial, uses citations.
+
+        Paper Section 3.3.2: Full review 'leverages external tools and web
+        searches to identify relevant articles for improved reasoning and
+        grounding' and scrutinizes 'underlying assumptions and reasoning'.
+        """
+        citations_block = "No citations provided."
+        if hypothesis.literature_citations:
+            citation_lines = []
+            for i, c in enumerate(hypothesis.literature_citations, 1):
+                citation_lines.append(
+                    f"{i}. {c.title}"
+                    f" (DOI: {c.doi or 'N/A'})"
+                    f" - Claimed relevance: {c.relevance}"
+                )
+            citations_block = "\n".join(citation_lines)
+
+        return f"""You are an expert scientific reviewer performing a FULL REVIEW of a hypothesis.
+This is a STRICTER review than an initial screening. Apply rigorous scrutiny.
+
+{self._format_hypothesis(hypothesis)}
+
+Experimental Protocol:
+- Objective: {hypothesis.experimental_protocol.objective if hypothesis.experimental_protocol else 'Not specified'}
+- Methodology: {hypothesis.experimental_protocol.methodology if hypothesis.experimental_protocol else 'Not specified'}
+
+Supporting Literature Cited:
+{citations_block}
+
+YOUR FULL REVIEW TASKS:
+1. **Verify citations support the claim**: For each cited paper, critically assess whether
+   it actually supports the hypothesis statement, or whether the cited relevance is
+   superficial, generic, or overclaimed. Flag any citation that is weak or tangential.
+
+2. **Probe underlying assumptions**: Identify the 3-5 key assumptions the hypothesis rests on.
+   For each, ask: does the cited literature actually establish this assumption? Is there
+   contrary evidence you know of? Are any assumptions unstated?
+
+3. **Scrutinize reasoning chains**: Walk through the hypothesis's logical chain from
+   premise to prediction. Where are the weakest links? Are there alternative explanations
+   that would also fit the same evidence?
+
+4. **Literature grounding check**: Is the hypothesis novel relative to the cited papers,
+   or is it largely restating what's already known? A hypothesis that merely repackages
+   prior work should fail the novelty criterion.
+
+5. **Experimental rigor check**: Is the proposed experiment able to distinguish the
+   hypothesis from plausible alternatives? Are controls adequate? What could confound
+   the predicted outcome?
+
+Score each criterion strictly (be harsher than an initial review):
+1. **Correctness**: Is it scientifically sound? (literature-grounded)
+2. **Quality**: Well-formulated, with precise claims and falsifiable predictions?
+3. **Novelty**: Genuinely new relative to the cited literature?
+4. **Testability**: Experiment can truly distinguish the hypothesis from alternatives?
+5. **Safety**: Ethical/safety concerns?
+
+A hypothesis should PASS this FULL review only if it clearly meets all criteria under
+rigorous scrutiny. Be strict. If citations are weak, assumptions unstated, or reasoning
+has gaps, fail it or flag it for revision.
+
+Provide detailed rationale for the pass/fail decision, concrete strengths, concrete
+weaknesses (citing specific parts of the hypothesis or citations), and actionable
+suggestions for improvement.
 """

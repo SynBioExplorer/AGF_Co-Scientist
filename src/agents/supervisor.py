@@ -107,6 +107,13 @@ class SupervisorAgent(BaseAgent):
         self.safety_agent = SafetyAgent()
         self.safety_threshold = settings.safety_threshold
 
+        # Context memory for self-improving loop (Paper Section 3.1)
+        self._context_insights: list[str] = []
+        self._explored_directions: list[str] = []
+
+        # Concurrency control for async worker execution (Paper Figure 2)
+        self._worker_semaphore = asyncio.Semaphore(settings.max_workers)
+
         # Agent instances (lazy-loaded)
         self._agents: Dict[AgentType, Any] = {}
 
@@ -120,14 +127,64 @@ class SupervisorAgent(BaseAgent):
             Dictionary mapping agent type to weight.
         """
         return {
-            AgentType.GENERATION: 0.35,          # 35% - create hypotheses
-            AgentType.REFLECTION: 0.18,          # 18% - review hypotheses
-            AgentType.RANKING: 0.18,             # 18% - tournament matches
-            AgentType.OBSERVATION_REVIEW: 0.12,  # 12% - validate against literature (Phase 6 Week 3)
-            AgentType.EVOLUTION: 0.09,           # 9% - refine top hypotheses
-            AgentType.PROXIMITY: 0.04,           # 4% - cluster similar hypotheses
+            AgentType.GENERATION: 0.25,          # 25% - create hypotheses
+            AgentType.REFLECTION: 0.25,          # 25% - INITIAL + FULL + DEEP_VERIFICATION reviews
+            AgentType.RANKING: 0.20,             # 20% - tournament matches
+            AgentType.EVOLUTION: 0.13,           # 13% - refine top hypotheses
+            AgentType.OBSERVATION_REVIEW: 0.08,  # 8% - validate against literature
+            AgentType.PROXIMITY: 0.05,           # 5% - cluster similar hypotheses
             AgentType.META_REVIEW: 0.04,         # 4% - synthesize feedback
         }
+
+    async def _update_context_memory(self, goal_id: str) -> None:
+        """Accumulate insights from meta-review and hypotheses into context memory.
+
+        Called at the end of each iteration to grow the self-improving loop.
+        """
+        meta_review = await self.storage.get_meta_review(goal_id)
+        if meta_review:
+            tag = f"[Iter {self.iteration}]"
+            for s in getattr(meta_review, "recurring_strengths", []):
+                self._context_insights.append(f"{tag} Strength: {s}")
+            for w in getattr(meta_review, "recurring_weaknesses", []):
+                self._context_insights.append(f"{tag} Weakness: {w}")
+            for o in getattr(meta_review, "improvement_opportunities", []):
+                self._context_insights.append(f"{tag} Opportunity: {o}")
+
+        hypotheses = await self.storage.get_hypotheses_by_goal(goal_id)
+        for h in hypotheses:
+            if h.title not in self._explored_directions:
+                self._explored_directions.append(h.title)
+
+        # Truncate to prevent unbounded growth
+        self._context_insights = self._context_insights[-30:]
+        self._explored_directions = self._explored_directions[-60:]
+
+        logger.info(
+            "context_memory_updated",
+            goal_id=goal_id,
+            iteration=self.iteration,
+            insights=len(self._context_insights),
+            explored=len(self._explored_directions),
+        )
+
+    def _format_context_for_prompt(self) -> str:
+        """Format accumulated context memory as a prompt section for agents."""
+        if not self._context_insights and not self._explored_directions:
+            return ""
+
+        parts = []
+        if self._context_insights:
+            parts.append("ACCUMULATED INSIGHTS FROM PRIOR ITERATIONS:")
+            for item in self._context_insights[-15:]:
+                parts.append(f"  - {item}")
+
+        if self._explored_directions:
+            parts.append("\nALREADY EXPLORED DIRECTIONS (do NOT repeat these):")
+            for d in self._explored_directions[-20:]:
+                parts.append(f"  - {d}")
+
+        return "\n".join(parts)
 
     def _get_agent(self, agent_type: AgentType) -> Any:
         """Get or create an agent instance.
@@ -168,7 +225,7 @@ class SupervisorAgent(BaseAgent):
         research_goal: ResearchGoal,
         max_iterations: int = 20,
         min_hypotheses: int = 6,
-        quality_threshold: float = 0.7,
+        quality_threshold: float = 0.85,
         convergence_threshold: float = 0.9,
         max_execution_time_seconds: int | None = None,
     ) -> str:
@@ -225,6 +282,7 @@ class SupervisorAgent(BaseAgent):
             max_execution_hours=round(max_execution_time_seconds / 3600, 2)
         )
 
+        self.max_iterations = max_iterations
         while self.iteration < max_iterations:
             self.iteration += 1
             logger.info(
@@ -269,6 +327,9 @@ class SupervisorAgent(BaseAgent):
 
             # Execute one iteration
             await self._execute_iteration(research_goal)
+
+            # Update context memory (self-improving loop)
+            await self._update_context_memory(research_goal.id)
 
             # Save checkpoint
             await self._save_checkpoint(research_goal.id, stats)
@@ -420,76 +481,109 @@ Respond with ONLY the JSON object."""
             goal_id=goal_id
         )
 
-    async def _execute_iteration(self, research_goal: ResearchGoal) -> None:
-        """Execute one iteration of task assignments.
+    async def _execute_task_with_semaphore(
+        self,
+        task: AgentTask,
+        research_goal: ResearchGoal
+    ) -> tuple:
+        """Execute a task with concurrency control via semaphore.
 
-        Processes tasks from the queue based on agent weights, executing
-        each task with the appropriate agent.
+        Returns:
+            Tuple of (task, result_or_None, error_or_None).
+        """
+        async with self._worker_semaphore:
+            try:
+                self.task_queue.update_task_status(task.id, "running")
+                result = await self._execute_task(task, research_goal)
+                self.task_queue.update_task_status(task.id, "complete", result=result)
+                return (task, result, None)
+            except Exception as e:
+                logger.error(
+                    "task_execution_failed",
+                    task_id=task.id,
+                    agent_type=task.agent_type.value,
+                    error=str(e)
+                )
+                self.task_queue.update_task_status(task.id, "failed")
+                return (task, None, e)
+
+    async def _execute_iteration(self, research_goal: ResearchGoal) -> None:
+        """Execute one iteration with phase-based parallel execution.
+
+        Tasks are organized into dependency-ordered phases (Paper Figure 2).
+        Within each phase, tasks run concurrently via asyncio.gather.
+
+        Phases:
+          1. GENERATION, PROXIMITY (create hypotheses + update graph)
+          2. REFLECTION, OBSERVATION_REVIEW (review new hypotheses)
+          3. RANKING, EVOLUTION (tournament + refine)
+          4. META_REVIEW (synthesize feedback)
 
         Args:
             research_goal: Current research goal.
         """
-        # Refresh proximity graph periodically for proximity-aware pairing
+        # Refresh proximity graph periodically
         if (settings.proximity_aware_pairing and
             self.iteration % settings.proximity_graph_refresh_frequency == 0):
-
             hypotheses = await self.storage.get_hypotheses_by_goal(research_goal.id)
             if len(hypotheses) >= 2:
-                # Create high-priority proximity graph refresh task
-                refresh_task = AgentTask(
+                self.task_queue.add_task(AgentTask(
                     id=generate_task_id(),
                     agent_type=AgentType.PROXIMITY,
                     task_type="build_proximity_graph",
-                    priority=8,  # High priority before tournament round
+                    priority=8,
                     parameters={
                         "goal_id": research_goal.id,
                         "hypothesis_ids": [h.id for h in hypotheses],
                     },
                     status="pending"
-                )
-                self.task_queue.add_task(refresh_task)
-                logger.info(
-                    "proximity_graph_refresh_scheduled",
-                    iteration=self.iteration,
-                    hypothesis_count=len(hypotheses)
-                )
+                ))
 
-        # Calculate tasks per agent based on weights
-        tasks_per_iteration = 5  # Base number of tasks per iteration
+        execution_phases = [
+            [AgentType.GENERATION, AgentType.PROXIMITY],
+            [AgentType.REFLECTION, AgentType.OBSERVATION_REVIEW],
+            [AgentType.RANKING, AgentType.EVOLUTION],
+            [AgentType.META_REVIEW],
+        ]
+
+        tasks_per_iteration = 12
         executed_count = 0
 
-        for agent_type, weight in self.agent_weights.items():
-            if weight <= 0:
+        for phase_idx, phase_agents in enumerate(execution_phases):
+            phase_tasks: list[AgentTask] = []
+
+            for agent_type in phase_agents:
+                weight = self.agent_weights.get(agent_type, 0)
+                if weight <= 0:
+                    continue
+
+                num_tasks = max(1, int(weight * tasks_per_iteration))
+                for _ in range(num_tasks):
+                    task = self.task_queue.get_next_task(agent_type)
+                    if not task:
+                        task = await self._create_task_for_agent(
+                            agent_type, research_goal
+                        )
+                        if not task:
+                            continue
+                    phase_tasks.append(task)
+
+            if not phase_tasks:
                 continue
 
-            num_tasks = max(1, int(weight * tasks_per_iteration))
+            # Execute all tasks in this phase concurrently
+            results = await asyncio.gather(
+                *[self._execute_task_with_semaphore(t, research_goal) for t in phase_tasks],
+                return_exceptions=True
+            )
 
-            for _ in range(num_tasks):
-                task = self.task_queue.get_next_task(agent_type)
-                if not task:
-                    # No pending tasks for this agent, create new ones
-                    task = await self._create_task_for_agent(
-                        agent_type, research_goal
-                    )
-                    if not task:
-                        continue
-
-                # Execute the task
-                try:
-                    self.task_queue.update_task_status(task.id, "running")
-                    result = await self._execute_task(task, research_goal)
-                    self.task_queue.update_task_status(
-                        task.id, "complete", result=result
-                    )
+            for item in results:
+                if isinstance(item, Exception):
+                    logger.error("phase_gather_error", phase=phase_idx + 1, error=str(item))
+                    continue
+                _task, _result, _error = item
+                if _error is None:
                     executed_count += 1
-                except Exception as e:
-                    logger.error(
-                        "task_execution_failed",
-                        task_id=task.id,
-                        agent_type=agent_type.value,
-                        error=str(e)
-                    )
-                    self.task_queue.update_task_status(task.id, "failed")
 
         logger.info(
             "iteration_tasks_executed",
@@ -517,7 +611,18 @@ Respond with ONLY the JSON object."""
         goal_id = research_goal.id
 
         if agent_type == AgentType.GENERATION:
-            # Create generation task
+            # Paper Section 3.3.1 lists 4 generation methods; we rotate 3 of them
+            # for diversity. RESEARCH_EXPANSION falls back to LITERATURE if no
+            # research overview is available yet (early iterations).
+            import random
+            method = random.choices(
+                [
+                    GenerationMethod.LITERATURE_EXPLORATION,
+                    GenerationMethod.SIMULATED_DEBATE,
+                    GenerationMethod.RESEARCH_EXPANSION,
+                ],
+                weights=[0.55, 0.25, 0.20], k=1
+            )[0]
             return AgentTask(
                 id=generate_task_id(),
                 agent_type=AgentType.GENERATION,
@@ -525,13 +630,13 @@ Respond with ONLY the JSON object."""
                 priority=8,
                 parameters={
                     "goal_id": goal_id,
-                    "method": GenerationMethod.LITERATURE_EXPLORATION.value,
+                    "method": method.value,
                 },
                 status="pending"
             )
 
         elif agent_type == AgentType.REFLECTION:
-            # Find hypotheses needing review
+            # Find hypotheses needing initial review first
             needing_review = await self.storage.get_hypotheses_needing_review(
                 goal_id, limit=1
             )
@@ -547,6 +652,25 @@ Respond with ONLY the JSON object."""
                     },
                     status="pending"
                 )
+
+            # No initial reviews needed - schedule deep verification for top hypotheses
+            top_hyps = await self.storage.get_top_hypotheses(n=3, goal_id=goal_id)
+            for hyp in top_hyps:
+                if hyp.status == HypothesisStatus.FULL_REVIEW:
+                    reviews = await self.storage.get_reviews_for_hypothesis(hyp.id)
+                    has_deep = any(r.review_type == ReviewType.DEEP_VERIFICATION for r in reviews)
+                    if not has_deep:
+                        return AgentTask(
+                            id=generate_task_id(),
+                            agent_type=AgentType.REFLECTION,
+                            task_type="deep_verification_review",
+                            priority=8,
+                            parameters={
+                                "hypothesis_id": hyp.id,
+                                "review_type": ReviewType.DEEP_VERIFICATION.value,
+                            },
+                            status="pending"
+                        )
 
         elif agent_type == AgentType.RANKING:
             # Find hypotheses for tournament
@@ -574,7 +698,7 @@ Respond with ONLY the JSON object."""
 
                 pairs = ranker.select_match_pairs(
                     hypotheses=reviewed,
-                    top_n=10,
+                    top_n=20,
                     proximity_graph=proximity_graph,
                     use_proximity=settings.proximity_aware_pairing,
                     proximity_weight=settings.proximity_pairing_weight,
@@ -582,7 +706,29 @@ Respond with ONLY the JSON object."""
                 )
 
                 if pairs:
-                    h1, h2 = pairs[0]  # Take first pair
+                    # Queue all extra pairs beyond the first directly, respecting
+                    # the ranking budget for this iteration. Paper Section 3.3.3
+                    # says multiple tournament matches run per iteration.
+                    tasks_per_iteration = 12  # matches _execute_iteration
+                    ranking_weight = self.agent_weights.get(AgentType.RANKING, 0)
+                    num_ranking_tasks = max(1, int(ranking_weight * tasks_per_iteration))
+                    extra_budget = max(0, num_ranking_tasks - 1)
+
+                    for h_extra_a, h_extra_b in pairs[1:1 + extra_budget]:
+                        self.task_queue.add_task(AgentTask(
+                            id=generate_task_id(),
+                            agent_type=AgentType.RANKING,
+                            task_type="tournament_match",
+                            priority=7,
+                            parameters={
+                                "hypothesis_a_id": h_extra_a.id,
+                                "hypothesis_b_id": h_extra_b.id,
+                                "cluster_aware": proximity_graph is not None,
+                            },
+                            status="pending"
+                        ))
+
+                    h1, h2 = pairs[0]  # Return first pair as this call's task
                     return AgentTask(
                         id=generate_task_id(),
                         agent_type=AgentType.RANKING,
@@ -654,6 +800,30 @@ Respond with ONLY the JSON object."""
                     status="pending"
                 )
 
+        elif agent_type == AgentType.OBSERVATION_REVIEW:
+            # Schedule observation review for hypotheses that have passed initial
+            # review but don't yet have an observation review (Paper Section 3.3.2)
+            eligible_statuses = {
+                HypothesisStatus.INITIAL_REVIEW,
+                HypothesisStatus.FULL_REVIEW,
+                HypothesisStatus.IN_TOURNAMENT,
+            }
+            hypotheses = await self.storage.get_hypotheses_by_goal(goal_id)
+            for h in hypotheses:
+                if h.status in eligible_statuses:
+                    existing = await self.storage.get_observation_review(h.id)
+                    if not existing:
+                        return AgentTask(
+                            id=generate_task_id(),
+                            agent_type=AgentType.OBSERVATION_REVIEW,
+                            task_type="observation_review",
+                            priority=5,
+                            parameters={
+                                "hypothesis_id": h.id,
+                            },
+                            status="pending"
+                        )
+
         return None
 
     async def _execute_task(
@@ -681,56 +851,55 @@ Respond with ONLY the JSON object."""
             method = GenerationMethod(params.get("method", "literature_exploration"))
             use_literature_expansion = params.get("use_web_search", False)
 
+            # For research expansion: fetch the research overview, meta-review,
+            # and existing hypothesis titles so the agent can target gaps.
+            research_overview = None
+            meta_review = None
+            existing_titles = None
+            if method == GenerationMethod.RESEARCH_EXPANSION:
+                research_overview = await self.storage.get_research_overview(research_goal.id)
+                meta_review = await self.storage.get_meta_review(research_goal.id)
+                all_hyps = await self.storage.get_hypotheses_by_goal(research_goal.id)
+                existing_titles = [h.title for h in all_hyps]
+
             # GenerationAgent.execute is async
             hypothesis = await agent.execute(
                 research_goal=research_goal,
                 method=method,
-                use_literature_expansion=use_literature_expansion
+                use_literature_expansion=use_literature_expansion,
+                context_instructions=self._format_context_for_prompt(),
+                research_overview=research_overview,
+                meta_review=meta_review,
+                existing_titles=existing_titles,
             )
 
-            # Safety review before storing hypothesis (mandatory)
-            try:
-                safety_assessment = await self.safety_agent.review_hypothesis(hypothesis)
+            # Safety review (skip if threshold is 0 to disable)
+            if self.safety_threshold > 0:
+                try:
+                    safety_assessment = await self.safety_agent.review_hypothesis(hypothesis)
+                    if not self.safety_agent.is_safe(safety_assessment, self.safety_threshold):
+                        logger.warning(
+                            "hypothesis_failed_safety_review",
+                            hypothesis_id=hypothesis.id,
+                            hypothesis_title=hypothesis.title[:50],
+                            safety_score=safety_assessment.get("safety_score"),
+                        )
+                        hypothesis.status = HypothesisStatus.REQUIRES_SAFETY_REVIEW
+                        await self.storage.add_hypothesis(hypothesis)
+                        return {
+                            "error": "safety_failed",
+                            "hypothesis_id": hypothesis.id,
+                            "safety_score": safety_assessment.get("safety_score"),
+                            "status": "requires_safety_review"
+                        }
+                except BudgetExceededError:
+                    raise
+                except Exception as e:
+                    logger.warning("safety_review_skipped", error=str(e))
 
-                # Check if hypothesis passes safety threshold
-                if not self.safety_agent.is_safe(safety_assessment, self.safety_threshold):
-                    logger.warning(
-                        "hypothesis_failed_safety_review",
-                        hypothesis_id=hypothesis.id,
-                        hypothesis_title=hypothesis.title[:50],
-                        safety_score=safety_assessment.get("safety_score"),
-                        risks=safety_assessment.get("risks", [])[:3]
-                    )
-                    # Mark hypothesis as requiring safety review
-                    hypothesis.status = HypothesisStatus.REQUIRES_SAFETY_REVIEW
-
-                    # Add hypothesis to storage but return error result
-                    # Note: Safety assessment is logged but not stored in hypothesis
-                    # (Hypothesis schema doesn't have metadata field yet)
-                    await self.storage.add_hypothesis(hypothesis)
-
-                    return {
-                        "error": "safety_failed",
-                        "hypothesis_id": hypothesis.id,
-                        "safety_score": safety_assessment.get("safety_score"),
-                        "status": "requires_safety_review"
-                    }
-
-            except BudgetExceededError:
-                # Budget errors always propagate
-                raise
-            except (LLMClientError, Exception) as e:
-                # Other errors propagate (fail task)
-                logger.error(
-                    "safety_review_error",
-                    hypothesis_id=hypothesis.id,
-                    error=str(e),
-                    error_type=type(e).__name__
-                )
-                raise
-
-            # Only add hypothesis if it passed safety review
-            hypothesis.status = HypothesisStatus.INITIAL_REVIEW
+            # Keep status as GENERATED (default) so the reflection filler
+            # can pick up this hypothesis via get_hypotheses_needing_review.
+            # Status will transition to INITIAL_REVIEW after the actual review runs.
             await self.storage.add_hypothesis(hypothesis)
             result = {"hypothesis_id": hypothesis.id}
 
@@ -755,13 +924,49 @@ Respond with ONLY the JSON object."""
                 # ReflectionAgent.execute is async
                 review = await agent.execute(
                     hypothesis=hypothesis,
-                    review_type=review_type
+                    review_type=review_type,
+                    context_guidance=self._format_context_for_prompt()
                 )
                 await self.storage.add_review(review)
 
-                # Update hypothesis status
-                hypothesis.status = HypothesisStatus.INITIAL_REVIEW
+                # Update hypothesis status based on review type
+                if review_type == ReviewType.DEEP_VERIFICATION:
+                    if review.passed:
+                        hypothesis.status = HypothesisStatus.IN_TOURNAMENT
+                elif review_type == ReviewType.FULL:
+                    hypothesis.status = HypothesisStatus.FULL_REVIEW
+                else:
+                    hypothesis.status = HypothesisStatus.INITIAL_REVIEW
                 await self.storage.update_hypothesis(hypothesis)
+
+                # Schedule next review stage in the quality pipeline:
+                # INITIAL passed -> queue FULL review
+                # FULL passed -> queue DEEP_VERIFICATION
+                if review.passed:
+                    if review_type == ReviewType.INITIAL:
+                        self.task_queue.add_task(AgentTask(
+                            id=generate_task_id(),
+                            agent_type=AgentType.REFLECTION,
+                            task_type="review_hypothesis",
+                            priority=8,
+                            parameters={
+                                "hypothesis_id": hypothesis.id,
+                                "review_type": ReviewType.FULL.value,
+                            },
+                            status="pending"
+                        ))
+                    elif review_type == ReviewType.FULL:
+                        self.task_queue.add_task(AgentTask(
+                            id=generate_task_id(),
+                            agent_type=AgentType.REFLECTION,
+                            task_type="deep_verification_review",
+                            priority=7,
+                            parameters={
+                                "hypothesis_id": hypothesis.id,
+                                "review_type": ReviewType.DEEP_VERIFICATION.value,
+                            },
+                            status="pending"
+                        ))
 
                 result = {"review_id": review.id, "passed": review.passed}
 
@@ -808,55 +1013,37 @@ Respond with ONLY the JSON object."""
                     agent.execute,
                     hypothesis=hypothesis,
                     strategy=strategy,
-                    reviews=reviews if reviews else None
+                    reviews=reviews if reviews else None,
+                    context_guidance=self._format_context_for_prompt(),
+                    research_goal_description=research_goal.description
                 )
 
-                # Safety review for evolved hypothesis (mandatory)
-                try:
-                    safety_assessment = await self.safety_agent.review_hypothesis(evolved)
+                # Safety review for evolved hypothesis (skip if threshold is 0)
+                if self.safety_threshold > 0:
+                    try:
+                        safety_assessment = await self.safety_agent.review_hypothesis(evolved)
+                        if not self.safety_agent.is_safe(safety_assessment, self.safety_threshold):
+                            logger.warning(
+                                "evolved_hypothesis_failed_safety_review",
+                                evolved_id=evolved.id,
+                                parent_id=hypothesis_id,
+                                safety_score=safety_assessment.get("safety_score"),
+                            )
+                            evolved.status = HypothesisStatus.REQUIRES_SAFETY_REVIEW
+                            await self.storage.add_hypothesis(evolved)
+                            hypothesis.status = HypothesisStatus.EVOLVED
+                            await self.storage.update_hypothesis(hypothesis)
+                            return {
+                                "error": "safety_failed",
+                                "evolved_hypothesis_id": evolved.id,
+                                "parent_id": hypothesis_id,
+                                "status": "requires_safety_review"
+                            }
+                    except BudgetExceededError:
+                        raise
+                    except Exception as e:
+                        logger.warning("safety_review_skipped_evolved", error=str(e))
 
-                    if not self.safety_agent.is_safe(safety_assessment, self.safety_threshold):
-                        logger.warning(
-                            "evolved_hypothesis_failed_safety_review",
-                            evolved_id=evolved.id,
-                            parent_id=hypothesis_id,
-                            safety_score=safety_assessment.get("safety_score"),
-                            risks=safety_assessment.get("risks", [])[:3]
-                        )
-                        evolved.status = HypothesisStatus.REQUIRES_SAFETY_REVIEW
-
-                        # Add evolved hypothesis to storage but return error result
-                        # Note: Safety assessment is logged but not stored in hypothesis
-                        # (Hypothesis schema doesn't have metadata field yet)
-                        await self.storage.add_hypothesis(evolved)
-
-                        # Mark original as evolved
-                        hypothesis.status = HypothesisStatus.EVOLVED
-                        await self.storage.update_hypothesis(hypothesis)
-
-                        return {
-                            "error": "safety_failed",
-                            "evolved_hypothesis_id": evolved.id,
-                            "parent_id": hypothesis_id,
-                            "safety_score": safety_assessment.get("safety_score"),
-                            "status": "requires_safety_review"
-                        }
-
-                except BudgetExceededError:
-                    # Budget errors always propagate
-                    raise
-                except (LLMClientError, Exception) as e:
-                    # Other errors propagate (fail task)
-                    logger.error(
-                        "safety_review_error_for_evolved",
-                        evolved_id=evolved.id,
-                        parent_id=hypothesis_id,
-                        error=str(e),
-                        error_type=type(e).__name__
-                    )
-                    raise
-
-                # Only add evolved hypothesis if it passed safety review
                 await self.storage.add_hypothesis(evolved)
 
                 # Mark original as evolved
@@ -873,7 +1060,8 @@ Respond with ONLY the JSON object."""
                 # Run sync agent in thread pool to avoid blocking event loop
                 graph = await asyncio.to_thread(
                     agent.execute,
-                    hypotheses=hypotheses[:10]
+                    hypotheses=hypotheses[:10],
+                    research_goal_id=research_goal.id
                 )
                 await self.storage.save_proximity_graph(graph)
                 result = {
@@ -979,16 +1167,21 @@ Respond with ONLY the JSON object."""
         if stats.total_hypotheses < min_hypotheses:
             return False, None
 
+        # Require at least 40% of max_iterations before allowing early stop.
+        # This ensures sufficient exploration before convergence checks
+        # can terminate the workflow.
+        min_iterations_before_stop = max(5, int(self.max_iterations * 0.7))
+
         # Check tournament convergence
         if stats.tournament_convergence_score >= convergence_threshold:
-            if self.iteration >= 3:  # Require minimum iterations
+            if self.iteration >= min_iterations_before_stop:
                 return True, f"Tournament converged ({stats.tournament_convergence_score:.2f})"
 
         # Check quality threshold
         if await self.statistics.calculate_quality_threshold_met(
             stats.research_goal_id, quality_threshold
         ):
-            if self.iteration >= 3:
+            if self.iteration >= min_iterations_before_stop:
                 return True, f"Quality threshold met ({quality_threshold})"
 
         return False, None
@@ -1028,6 +1221,8 @@ Respond with ONLY the JSON object."""
             system_statistics=stats,
             hypothesis_ids=[h.id for h in hypotheses],
             iteration_count=self.iteration,
+            accumulated_insights=self._context_insights,
+            explored_directions=self._explored_directions,
         )
 
         # First attempt to save checkpoint
@@ -1179,10 +1374,14 @@ Respond with ONLY the JSON object."""
 
         # Restore state
         self.iteration = checkpoint.iteration_count
+        self._context_insights = checkpoint.accumulated_insights or []
+        self._explored_directions = checkpoint.explored_directions or []
         logger.info(
             "resuming_from_checkpoint",
             goal_id=research_goal.id,
-            iteration=self.iteration
+            iteration=self.iteration,
+            restored_insights=len(self._context_insights),
+            restored_directions=len(self._explored_directions),
         )
 
         # Continue execution

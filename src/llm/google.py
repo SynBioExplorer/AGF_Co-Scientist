@@ -42,9 +42,12 @@ class GoogleGeminiClient(BaseLLMClient):
         super().__init__(model, cost_tracker)
 
         self.agent_name = agent_name
+        # Prefer env var (set per-request by API middleware) over frozen settings
+        import os
+        api_key = os.environ.get("GOOGLE_API_KEY") or settings.google_api_key
         self.llm = ChatGoogleGenerativeAI(
             model=model,
-            google_api_key=settings.google_api_key,
+            google_api_key=api_key,
             temperature=0.7,
             max_output_tokens=8192,
             callbacks=self.callbacks  # Add tracing callbacks

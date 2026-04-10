@@ -163,6 +163,7 @@ async def inject_api_keys_middleware(request: Request, call_next):
     """
     # Store original env vars to restore after request
     original_env = {}
+    original_provider = None
 
     # Map headers to environment variables
     header_env_map = {
@@ -173,6 +174,15 @@ async def inject_api_keys_middleware(request: Request, call_next):
         "x-pubmed-api-key": "PUBMED_API_KEY",
         "x-langsmith-api-key": "LANGCHAIN_API_KEY",
     }
+
+    # Override LLM provider from frontend selection
+    provider_header = request.headers.get("x-llm-provider")
+    if provider_header and provider_header in ("google", "openai"):
+        original_provider = settings.llm_provider
+        # Temporarily mutate the global settings so all model property
+        # lookups (supervisor_model, generation_model, etc.) resolve
+        # to the provider the user selected in the frontend.
+        object.__setattr__(settings, "llm_provider", provider_header)
 
     # Inject API keys from headers
     for header, env_var in header_env_map.items():
@@ -196,6 +206,10 @@ async def inject_api_keys_middleware(request: Request, call_next):
         response = await call_next(request)
         return response
     finally:
+        # Restore original LLM provider
+        if original_provider is not None:
+            object.__setattr__(settings, "llm_provider", original_provider)
+
         # Restore original environment variables
         for env_var, original_value in original_env.items():
             if original_value is None:

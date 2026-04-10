@@ -56,7 +56,17 @@ class RankingAgent(BaseAgent):
             multi_turn=multi_turn
         )
 
-        # Format prompt
+        # Paper Section 3.3.3: multi-turn debates ARE the adjudication
+        # method for top hypotheses. Run the debate FIRST, then decide.
+        debate_turns = []
+        if multi_turn:
+            debate_turns = self._run_multi_turn_debate(
+                hypothesis_a,
+                hypothesis_b,
+                num_turns=3
+            )
+
+        # Format prompt (now with debate transcript if available)
         prompt = prompt_manager.format_ranking_prompt(
             hypothesis_a=self._format_hypothesis(hypothesis_a),
             hypothesis_b=self._format_hypothesis(hypothesis_b),
@@ -64,8 +74,14 @@ class RankingAgent(BaseAgent):
             goal=goal or "Compare hypotheses for tournament ranking"
         )
 
+        debate_context = ""
+        if debate_turns:
+            debate_context = "\n\n=== MULTI-TURN SCIENTIFIC DEBATE TRANSCRIPT ===\n"
+            debate_context += self._format_debate_for_decision(debate_turns)
+            debate_context += "\n=== END TRANSCRIPT ===\n\nBase your winner decision on the arguments made during this debate."
+
         # Add structured output instruction
-        structured_prompt = f"""{prompt}
+        structured_prompt = f"""{prompt}{debate_context}
 
 IMPORTANT: Return your response as valid JSON matching this schema:
 {{
@@ -96,15 +112,6 @@ Respond with ONLY the JSON object, no additional text."""
             if winner_id not in [hypothesis_a.id, hypothesis_b.id]:
                 raise CoScientistError(f"Invalid winner_id: {winner_id}")
 
-            # Multi-turn debate for high-stakes comparisons
-            debate_turns = []
-            if multi_turn:
-                debate_turns = self._run_multi_turn_debate(
-                    hypothesis_a,
-                    hypothesis_b,
-                    num_turns=3
-                )
-
             # Calculate Elo changes (basic implementation - will be improved with tournament module)
             k_factor = 32  # Standard Elo K-factor
             expected_a = 1 / (1 + 10 ** ((hypothesis_b.elo_rating - hypothesis_a.elo_rating) / 400))
@@ -125,7 +132,7 @@ Respond with ONLY the JSON object, no additional text."""
                 debate_turns=debate_turns,
                 is_multi_turn=multi_turn,
                 winner_id=winner_id,
-                decision_rationale=data["decision_rationale"],
+                decision_rationale=data.get("decision_rationale", "No rationale provided"),
                 comparison_criteria=data.get("comparison_criteria", []),
                 elo_change_a=elo_change_a,
                 elo_change_b=elo_change_b
@@ -143,6 +150,18 @@ Respond with ONLY the JSON object, no additional text."""
 
         except (json.JSONDecodeError, PydanticValidationError, KeyError) as e:
             raise CoScientistError(f"Failed to parse LLM response: {e}\nResponse: {response[:500]}")
+
+    def _format_debate_for_decision(self, turns: list) -> str:
+        """Format debate turns as a readable transcript for the decision prompt."""
+        parts = []
+        for i, t in enumerate(turns, 1):
+            speaker = getattr(t, 'speaker', f'Turn {i}')
+            argument = getattr(t, 'argument', '')
+            parts.append(f"[{speaker}]: {argument}")
+            counterpoints = getattr(t, 'counterpoints', [])
+            if counterpoints:
+                parts.append("Counterpoints: " + "; ".join(counterpoints))
+        return "\n\n".join(parts)
 
     def _format_hypothesis(self, hypothesis: Hypothesis) -> str:
         """Format hypothesis for prompt"""
