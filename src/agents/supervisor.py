@@ -111,6 +111,7 @@ class SupervisorAgent(BaseAgent):
         self._context_insights: list[str] = []
         self._explored_directions: list[str] = []
         self._used_match_pairs: set[tuple[str, str]] = set()
+        self._last_evolved_ids: list[str] = []
 
         # Concurrency control for async worker execution (Paper Figure 2)
         self._worker_semaphore = asyncio.Semaphore(settings.max_workers)
@@ -759,17 +760,28 @@ Respond with ONLY the JSON object."""
                     )
 
         elif agent_type == AgentType.EVOLUTION:
-            # Find top hypothesis for evolution
-            top = await self.storage.get_top_hypotheses(n=1, goal_id=goal_id)
+            # Select from top-5, skipping recently-evolved parents to
+            # prevent monoculture (paper says "top-ranked hypotheses",
+            # not "the single top hypothesis" repeatedly).
+            top = await self.storage.get_top_hypotheses(n=5, goal_id=goal_id)
             if top:
-                # Get reviews for this hypothesis to inform strategy selection
-                reviews = await self.storage.get_reviews_for_hypothesis(top[0].id)
+                recent = set(self._last_evolved_ids[-3:])
+                candidate = next((h for h in top if h.id not in recent), top[0])
+
+                reviews = await self.storage.get_reviews_for_hypothesis(candidate.id)
                 all_hypotheses = await self.storage.get_hypotheses_by_goal(goal_id)
 
-                # Dynamic strategy selection based on context
                 strategy = select_evolution_strategy(
                     reviews=reviews,
                     hypothesis_count=len(all_hypotheses)
+                )
+
+                self._last_evolved_ids.append(candidate.id)
+                logger.info(
+                    "evolution_parent_selected",
+                    parent_id=candidate.id,
+                    parent_title=candidate.title[:80],
+                    skipped_recent=len(recent),
                 )
 
                 return AgentTask(
@@ -778,7 +790,7 @@ Respond with ONLY the JSON object."""
                     task_type="evolve_hypothesis",
                     priority=6,
                     parameters={
-                        "hypothesis_id": top[0].id,
+                        "hypothesis_id": candidate.id,
                         "strategy": strategy.value,
                     },
                     status="pending"
@@ -1344,22 +1356,37 @@ Respond with ONLY the JSON object."""
                 meta_review.research_goal_id = research_goal.id
                 await self.storage.save_meta_review(meta_review)
 
-            # Generate research overview (run sync agent in thread pool)
-            overview = await asyncio.to_thread(
-                agent.generate_research_overview,
+            # Generate research overview with retry (asyncio.to_thread
+            # can hit "generator didn't stop after throw()" on some LLM calls)
+            overview = None
+            overview_kwargs = dict(
                 goal=research_goal.description,
                 top_hypotheses=top_hypotheses,
                 meta_review=meta_review,
                 preferences=research_goal.preferences,
                 research_goal_id=research_goal.id
             )
+            for attempt in range(2):
+                try:
+                    overview = await asyncio.to_thread(
+                        agent.generate_research_overview, **overview_kwargs
+                    )
+                    break
+                except Exception as e:
+                    logger.warning("overview_generation_retry", attempt=attempt + 1, error=str(e)[:200])
+                    if attempt == 1:
+                        try:
+                            overview = agent.generate_research_overview(**overview_kwargs)
+                        except Exception as e2:
+                            logger.error("overview_generation_failed_final", error=str(e2)[:200])
 
-            await self.storage.save_research_overview(overview)
-            logger.info(
-                "research_overview_generated",
-                overview_id=overview.id,
-                num_directions=len(overview.research_directions)
-            )
+            if overview:
+                await self.storage.save_research_overview(overview)
+                logger.info(
+                    "research_overview_generated",
+                    overview_id=overview.id,
+                    num_directions=len(overview.research_directions)
+                )
 
             return overview
 

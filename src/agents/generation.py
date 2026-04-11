@@ -596,7 +596,7 @@ Return ONLY valid JSON:
         Returns None if no research overview is available yet (early iterations).
         """
         if research_overview is None:
-            self.logger.info("research_expansion_skipped_no_overview")
+            self.logger.warning("research_expansion_fallback", reason="no_research_overview")
             return None
 
         from src.utils.json_parser import parse_llm_json
