@@ -110,10 +110,29 @@ IMPORTANT: Return your response as valid JSON matching this schema:
 
 Respond with ONLY the JSON object, no additional text."""
 
-        # Invoke LLM
-        response = self.llm_client.invoke(structured_prompt)
+        # Invoke LLM with retry on truncated/malformed JSON
+        max_attempts = 2
+        response = None
+        last_error = None
 
-        # Parse response
+        for attempt in range(max_attempts):
+            response = self.llm_client.invoke(structured_prompt)
+            try:
+                response = self._parse_evolution_response(response, hypothesis, strategy)
+                return response
+            except CoScientistError as e:
+                last_error = e
+                if attempt < max_attempts - 1:
+                    self.logger.warning(
+                        "evolution_parse_retry",
+                        attempt=attempt + 1,
+                        error=str(e)[:200]
+                    )
+                    continue
+                raise last_error
+
+    def _parse_evolution_response(self, response: str, hypothesis, strategy) -> "Hypothesis":
+        """Parse evolution LLM response into a Hypothesis, raising on failure."""
         try:
             # Extract JSON from response
             if "```json" in response:
