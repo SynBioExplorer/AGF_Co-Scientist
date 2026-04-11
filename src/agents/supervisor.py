@@ -110,6 +110,7 @@ class SupervisorAgent(BaseAgent):
         # Context memory for self-improving loop (Paper Section 3.1)
         self._context_insights: list[str] = []
         self._explored_directions: list[str] = []
+        self._used_match_pairs: set[tuple[str, str]] = set()
 
         # Concurrency control for async worker execution (Paper Figure 2)
         self._worker_semaphore = asyncio.Semaphore(settings.max_workers)
@@ -681,6 +682,17 @@ Respond with ONLY the JSON object."""
                 if h.status != HypothesisStatus.GENERATED
             ]
             if len(reviewed) >= 2:
+                # Annotate each hypothesis with match count so the ranker
+                # can prioritize newcomers (paper: "newer hypotheses prioritized")
+                from collections import Counter
+                all_matches = await self.storage.get_all_matches(goal_id)
+                match_counts: Counter = Counter()
+                for m in (all_matches or []):
+                    match_counts[m.hypothesis_a_id] += 1
+                    match_counts[m.hypothesis_b_id] += 1
+                for h in reviewed:
+                    h._match_count = match_counts.get(h.id, 0)
+
                 # Get proximity graph if proximity-aware pairing is enabled
                 proximity_graph = None
                 if settings.proximity_aware_pairing:
@@ -699,18 +711,21 @@ Respond with ONLY the JSON object."""
 
                 pairs = ranker.select_match_pairs(
                     hypotheses=reviewed,
-                    top_n=20,
+                    top_n=min(20, len(reviewed)),
                     proximity_graph=proximity_graph,
                     use_proximity=settings.proximity_aware_pairing,
                     proximity_weight=settings.proximity_pairing_weight,
-                    diversity_weight=settings.diversity_pairing_weight
+                    diversity_weight=settings.diversity_pairing_weight,
+                    exclude_pairs=self._used_match_pairs,
                 )
 
                 if pairs:
-                    # Queue all extra pairs beyond the first directly, respecting
-                    # the ranking budget for this iteration. Paper Section 3.3.3
-                    # says multiple tournament matches run per iteration.
-                    tasks_per_iteration = 12  # matches _execute_iteration
+                    # Record all pairs to prevent re-matching in future iterations
+                    for h_a, h_b in pairs:
+                        self._used_match_pairs.add(tuple(sorted([h_a.id, h_b.id])))
+
+                    # Queue extra pairs beyond the first, respecting ranking budget
+                    tasks_per_iteration = 12
                     ranking_weight = self.agent_weights.get(AgentType.RANKING, 0)
                     num_ranking_tasks = max(1, int(ranking_weight * tasks_per_iteration))
                     extra_budget = max(0, num_ranking_tasks - 1)
@@ -729,7 +744,7 @@ Respond with ONLY the JSON object."""
                             status="pending"
                         ))
 
-                    h1, h2 = pairs[0]  # Return first pair as this call's task
+                    h1, h2 = pairs[0]
                     return AgentTask(
                         id=generate_task_id(),
                         agent_type=AgentType.RANKING,

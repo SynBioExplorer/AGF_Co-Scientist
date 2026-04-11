@@ -169,26 +169,29 @@ class TournamentRanker:
         proximity_graph: Optional[ProximityGraph] = None,
         use_proximity: bool = True,
         proximity_weight: float = 0.7,
-        diversity_weight: float = 0.2
+        diversity_weight: float = 0.2,
+        exclude_pairs: Optional[Set[Tuple[str, str]]] = None
     ) -> list[Tuple[Hypothesis, Hypothesis]]:
         """Select hypothesis pairs for tournament matches
 
         Strategy (when proximity_graph available and use_proximity=True):
-        - 70% Within-cluster pairing: Compare similar hypotheses (same cluster)
-        - 20% Cross-cluster diversity: Compare distant hypotheses (different clusters)
-        - 10% Elite top-N: Round-robin for top performers
+        - 30% Newcomer matches: Unmatched hypotheses vs top-ranked (paper: "newer hypotheses prioritized")
+        - 49% Within-cluster pairing: Compare similar hypotheses (same cluster)
+        - 14% Cross-cluster diversity: Compare distant hypotheses (different clusters)
+        - 7% Elite top-N: Round-robin for top performers
 
         Fallback (when proximity_graph=None or use_proximity=False):
         - Top-ranked hypotheses (top 10) are paired with each other
         - Middle-ranked hypotheses are paired with similar-rated opponents
 
         Args:
-            hypotheses: List of all hypotheses
+            hypotheses: List of all hypotheses (must have _match_count attribute)
             top_n: Number of top hypotheses to cross-compare
             proximity_graph: Optional proximity graph for cluster-aware pairing
             use_proximity: Enable proximity-based pairing
             proximity_weight: Proportion of within-cluster matches (0.0-1.0)
             diversity_weight: Proportion of cross-cluster matches (0.0-1.0)
+            exclude_pairs: Set of (id_a, id_b) tuples already matched in prior iterations
 
         Returns:
             List of (hypothesis_a, hypothesis_b) tuples for matches
@@ -205,7 +208,8 @@ class TournamentRanker:
                 proximity_graph,
                 top_n,
                 proximity_weight,
-                diversity_weight
+                diversity_weight,
+                exclude_pairs or set()
             )
 
         # Fallback to Elo-based pairing
@@ -239,7 +243,8 @@ class TournamentRanker:
         proximity_graph: ProximityGraph,
         top_n: int,
         proximity_weight: float,
-        diversity_weight: float
+        diversity_weight: float,
+        exclude_pairs: Set[Tuple[str, str]] = None
     ) -> list[Tuple[Hypothesis, Hypothesis]]:
         """Proximity-aware pairing using cluster information"""
         # Build hypothesis lookup and cluster mapping
@@ -250,14 +255,26 @@ class TournamentRanker:
         total_possible = len(ranked) * (len(ranked) - 1) // 2
         target_total = min(20, total_possible)  # Limit total matches
 
-        num_cluster = int(target_total * proximity_weight)
-        num_diversity = int(target_total * diversity_weight)
-        num_elite = target_total - num_cluster - num_diversity
+        # Merge excluded pairs from prior iterations
+        used_pairs: Set[Tuple[str, str]] = set(exclude_pairs or set())
 
-        pairs = []
-        used_pairs: Set[Tuple[str, str]] = set()
+        # TIER 0: Newcomer matches (paper: "newer hypotheses prioritized")
+        newcomers = [h for h in ranked if getattr(h, '_match_count', 0) == 0]
+        num_newcomer = min(int(target_total * 0.3), len(newcomers))
+        remaining = target_total - num_newcomer
 
-        # 1. Within-cluster pairing (70%)
+        newcomer_pairs = self._create_newcomer_pairings(
+            newcomers, ranked, num_newcomer, used_pairs
+        )
+
+        # Rebalance remaining budget across original tiers
+        num_cluster = int(remaining * proximity_weight)
+        num_diversity = int(remaining * diversity_weight)
+        num_elite = remaining - num_cluster - num_diversity
+
+        pairs = list(newcomer_pairs)
+
+        # 1. Within-cluster pairing
         cluster_pairs = self._create_cluster_pairings(
             proximity_graph.clusters,
             hyp_map,
@@ -266,7 +283,7 @@ class TournamentRanker:
         )
         pairs.extend(cluster_pairs)
 
-        # 2. Cross-cluster diversity pairing (20%)
+        # 2. Cross-cluster diversity pairing
         diversity_pairs = self._create_diversity_pairings(
             proximity_graph.clusters,
             proximity_graph,
@@ -276,7 +293,7 @@ class TournamentRanker:
         )
         pairs.extend(diversity_pairs)
 
-        # 3. Elite top-N pairing (10%)
+        # 3. Elite top-N pairing
         elite_pairs = self._create_elite_pairings(
             ranked[:top_n],
             num_elite,
@@ -287,6 +304,7 @@ class TournamentRanker:
         logger.info(
             "tournament_pairing_strategy",
             total_pairs=len(pairs),
+            newcomer=len(newcomer_pairs),
             within_cluster=len(cluster_pairs),
             diversity=len(diversity_pairs),
             elite=len(elite_pairs),
@@ -407,6 +425,45 @@ class TournamentRanker:
 
             if len(pairs) >= num_pairs:
                 break
+
+        return pairs
+
+    def _create_newcomer_pairings(
+        self,
+        newcomers: list[Hypothesis],
+        ranked: list[Hypothesis],
+        num_pairs: int,
+        used_pairs: Set[Tuple[str, str]]
+    ) -> list[Tuple[Hypothesis, Hypothesis]]:
+        """Pair unmatched hypotheses against top-ranked opponents.
+
+        Paper (Section 3.3.3): "newer and top-ranking hypotheses are
+        prioritized for participation in tournament matches."
+        """
+        import random
+        pairs = []
+
+        if not newcomers or len(ranked) < 2:
+            return pairs
+
+        # Top 50% by Elo as potential opponents
+        top_half = ranked[:max(1, len(ranked) // 2)]
+
+        for newcomer in newcomers:
+            if len(pairs) >= num_pairs:
+                break
+
+            # Pick a random opponent from top half (excluding self)
+            candidates = [h for h in top_half if h.id != newcomer.id]
+            if not candidates:
+                continue
+
+            opponent = random.choice(candidates)
+            pair_key = tuple(sorted([newcomer.id, opponent.id]))
+
+            if pair_key not in used_pairs:
+                pairs.append((newcomer, opponent))
+                used_pairs.add(pair_key)
 
         return pairs
 
