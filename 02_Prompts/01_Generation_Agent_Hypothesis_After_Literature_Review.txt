@@ -17,6 +17,9 @@ Goal: {goal}
 Criteria for a strong hypothesis:
 {preferences}
 
+Hard constraints the hypothesis MUST satisfy:
+{constraints}
+
 Existing hypothesis (if applicable):
 {source_hypothesis}
 

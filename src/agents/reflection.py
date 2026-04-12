@@ -362,7 +362,8 @@ Return ONLY valid JSON:
         review_type: ReviewType = ReviewType.INITIAL,
         article: str = "",
         use_refutation_search: bool = True,
-        context_guidance: str = ""
+        context_guidance: str = "",
+        research_goal: object = None,
     ) -> Review:
         """Review a hypothesis
 
@@ -450,6 +451,15 @@ When scoring this hypothesis, carefully consider:
             prompt = f"""{prompt}
 
 {context_guidance}
+"""
+
+        # Append constraints from research goal so reviewer checks compliance
+        if research_goal and hasattr(research_goal, 'constraints') and research_goal.constraints:
+            constraints_text = "\n".join(f"- {c}" for c in research_goal.constraints)
+            prompt = f"""{prompt}
+
+CONSTRAINTS (the hypothesis must satisfy these; flag violations):
+{constraints_text}
 """
 
         # Add structured output instruction
@@ -616,10 +626,20 @@ Score each criterion strictly (be harsher than an initial review):
 3. **Novelty**: Genuinely new relative to the cited literature?
 4. **Testability**: Experiment can truly distinguish the hypothesis from alternatives?
 5. **Safety**: Ethical/safety concerns?
+6. **Biochemical compatibility**: For every enzyme, genetic part, or binding domain proposed,
+   check and flag any of the following as CRITICAL WEAKNESS:
+   a. Cofactor specificity (e.g., NADH vs NADPH, ATP vs GTP) matches the stated role.
+   b. Substrate specificity - the enzyme's real substrate is actually present in the host.
+   c. Environmental compatibility - the enzyme functions under the stated conditions
+      (aerobic vs anaerobic/microaerobic, pH, temperature).
+   d. Host compatibility - the part has been demonstrated in this host or a close relative;
+      flag cross-phylum porting (e.g., Gram-positive to Gram-negative).
+   e. Binding-domain target - if a binding/anchor domain is used, its cognate ligand
+      is actually present in the host's matrix/surface.
 
 A hypothesis should PASS this FULL review only if it clearly meets all criteria under
-rigorous scrutiny. Be strict. If citations are weak, assumptions unstated, or reasoning
-has gaps, fail it or flag it for revision.
+rigorous scrutiny. Be strict. If citations are weak, assumptions unstated, reasoning
+has gaps, or biochemical compatibility issues are found, fail it or flag for revision.
 
 Provide detailed rationale for the pass/fail decision, concrete strengths, concrete
 weaknesses (citing specific parts of the hypothesis or citations), and actionable

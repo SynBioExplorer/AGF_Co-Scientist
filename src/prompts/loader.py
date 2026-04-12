@@ -32,6 +32,7 @@ class PromptManager:
         self,
         goal: str,
         preferences: list[str],
+        constraints: list[str] = None,
         method: str = "literature",  # "literature" or "debate"
         source_hypothesis: str = "",
         instructions: str = "",
@@ -48,6 +49,7 @@ class PromptManager:
         formatted = template.format(
             goal=goal,
             preferences="\n".join(f"- {p}" for p in preferences) if preferences else "Standard scientific rigor",
+            constraints="\n".join(f"- {c}" for c in constraints) if constraints else "None",
             source_hypothesis=source_hypothesis or "None",
             instructions=instructions or "",
             articles_with_reasoning=articles_with_reasoning or "Initial hypothesis generation - no prior literature review.",

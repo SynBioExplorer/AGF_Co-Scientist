@@ -879,16 +879,16 @@ Respond with ONLY the JSON object."""
             method = GenerationMethod(params.get("method", "literature_exploration"))
             use_literature_expansion = params.get("use_web_search", False)
 
-            # For research expansion: fetch the research overview, meta-review,
-            # and existing hypothesis titles so the agent can target gaps.
+            # Fetch existing titles for deduplication (all methods)
+            all_hyps = await self.storage.get_hypotheses_by_goal(research_goal.id)
+            existing_titles = [h.title for h in all_hyps]
+
+            # For research expansion: also fetch overview and meta-review
             research_overview = None
             meta_review = None
-            existing_titles = None
             if method == GenerationMethod.RESEARCH_EXPANSION:
                 research_overview = await self.storage.get_research_overview(research_goal.id)
                 meta_review = await self.storage.get_meta_review(research_goal.id)
-                all_hyps = await self.storage.get_hypotheses_by_goal(research_goal.id)
-                existing_titles = [h.title for h in all_hyps]
 
             # GenerationAgent.execute is async
             hypothesis = await agent.execute(
@@ -953,7 +953,8 @@ Respond with ONLY the JSON object."""
                 review = await agent.execute(
                     hypothesis=hypothesis,
                     review_type=review_type,
-                    context_guidance=self._format_context_for_prompt()
+                    context_guidance=self._format_context_for_prompt(),
+                    research_goal=research_goal,
                 )
                 await self.storage.add_review(review)
 

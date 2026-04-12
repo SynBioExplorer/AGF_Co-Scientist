@@ -10,6 +10,9 @@ Goal: {goal}
 Criteria for a high-quality hypothesis:
 {preferences}
 
+Hard constraints the hypothesis MUST satisfy:
+{constraints}
+
 Instructions:
 {instructions}
 

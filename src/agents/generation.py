@@ -458,6 +458,7 @@ class GenerationAgent(BaseAgent):
         self,
         research_goal: ResearchGoal,
         literature_context: str = "",
+        existing_titles: list = None,
     ) -> Hypothesis:
         """Generate a hypothesis through simulated multi-expert scientific debate.
 
@@ -496,6 +497,7 @@ class GenerationAgent(BaseAgent):
 Turn {turn}/{num_turns} of a scientific debate to develop a novel hypothesis.
 
 Research Goal: {research_goal.description}
+{f"Hard constraints: " + "; ".join(research_goal.constraints) if research_goal.constraints else ""}
 {f"Literature Context: {literature_context[:3000]}" if literature_context else ""}
 {f"DEBATE SO FAR:{transcript}" if transcript else "This is the opening. No prior discussion."}
 
@@ -521,8 +523,8 @@ Extract the strongest ideas, address criticisms, and produce a coherent hypothes
 
 CRITICAL: The hypothesis MUST be specifically about: {research_goal.description}
 Do NOT propose ideas about unrelated topics, organisms, or fields.
-
-SAFETY NOTE: Assume a standardized BSL-2 K. oxytoca chassis. Do not re-derive biocontainment modules; focus on the novel experimental aspects.
+{f"Hard constraints: " + "; ".join(research_goal.constraints) if research_goal.constraints else ""}
+{f"EXISTING HYPOTHESES (do NOT duplicate): " + "; ".join(existing_titles[:10]) if existing_titles else ""}
 
 Cite the most relevant papers discussed during the debate. Include title, DOI, and relevance.
 
@@ -795,6 +797,7 @@ Return ONLY valid JSON:
             hypothesis = await self._generate_via_debate(
                 research_goal=research_goal,
                 literature_context=literature_context,
+                existing_titles=existing_titles,
             )
             if use_literature_expansion:
                 hypothesis = await self._validate_citations(hypothesis, citation_graph)
@@ -820,16 +823,21 @@ Return ONLY valid JSON:
         prompt = prompt_manager.format_generation_prompt(
             goal=research_goal.description,
             preferences=research_goal.preferences,
+            constraints=research_goal.constraints,
             method=method_str,
             articles_with_reasoning=literature_context,
             instructions=context_instructions
         )
 
         # Add structured output instruction
+        # Add existing titles for deduplication
+        existing_block = ""
+        if existing_titles:
+            titles_list = "\n".join(f"- {t}" for t in existing_titles[:20])
+            existing_block = f"\nEXISTING HYPOTHESES in this goal (do NOT duplicate; propose something distinct):\n{titles_list}\n"
+
         structured_prompt = f"""{prompt}
-
-SAFETY NOTE: Assume a standardized BSL-2 K. oxytoca chassis. Do not re-derive biocontainment modules; focus your protocol on the novel experimental aspects.
-
+{existing_block}
 When formulating your hypothesis, cite the most relevant papers from the literature context above. Include their title, DOI, and relevance in the citations array.
 
 IMPORTANT: Return your response as valid JSON matching this schema:
