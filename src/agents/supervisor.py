@@ -1114,6 +1114,27 @@ Respond with ONLY the JSON object."""
             # Set proper research_goal_id
             meta_review.research_goal_id = research_goal.id
             await self.storage.save_meta_review(meta_review)
+
+            # Also generate research overview so expansion method has data
+            # (without this, get_research_overview returns None during iterations)
+            try:
+                top_hyps = await self.storage.get_top_hypotheses(n=5, goal_id=research_goal.id)
+                if top_hyps:
+                    overview = agent.generate_research_overview(
+                        goal=research_goal.description,
+                        top_hypotheses=top_hyps,
+                        meta_review=meta_review,
+                        preferences=research_goal.preferences,
+                        research_goal_id=research_goal.id
+                    )
+                    if overview:
+                        await self.storage.save_research_overview(overview)
+                        logger.info("research_overview_generated_in_iteration",
+                                    overview_id=overview.id,
+                                    iteration=self.iteration)
+            except Exception as e:
+                logger.warning("in_iteration_overview_failed", error=str(e)[:200])
+
             result = {"meta_review_id": meta_review.id}
 
         elif task.agent_type == AgentType.OBSERVATION_REVIEW:
