@@ -589,6 +589,130 @@ Return ONLY valid JSON:
         )
         return hypothesis
 
+    async def _generate_via_iterative_assumptions(
+        self,
+        research_goal: ResearchGoal,
+        existing_titles: list = None,
+    ) -> Optional[Hypothesis]:
+        """Generate a hypothesis via iterative assumption identification.
+
+        Paper Section 3.3.1: 'iteratively identifies testable intermediate
+        assumptions, which, if proven true, can lead to novel scientific
+        discovery. These plausible assumptions and their sub-assumptions are
+        identified through conditional reasoning hops and subsequently
+        aggregated into complete hypotheses.'
+        """
+        existing_block = ""
+        if existing_titles:
+            existing_block = "\nExisting hypotheses (propose something DIFFERENT):\n" + "\n".join(
+                f"- {t}" for t in existing_titles[:15]
+            )
+
+        constraints_block = ""
+        if research_goal.constraints:
+            constraints_block = "\nConstraints:\n" + "\n".join(f"- {c}" for c in research_goal.constraints)
+
+        # Step 1: Identify untested assumptions in the research field
+        assumptions_prompt = f"""You are an expert scientist analyzing the research landscape for:
+{research_goal.description}
+{constraints_block}
+{existing_block}
+
+Identify 5 key scientific assumptions in this field that are:
+- Widely assumed to be true but NOT rigorously tested experimentally
+- Testable with current synthetic biology methods
+- If proven true OR false, would open a novel line of research
+
+For each assumption, provide:
+1. The assumption itself (one sentence)
+2. Current evidence level: STRONG / MODERATE / WEAK / NONE
+3. A brief experiment that could test it
+4. What new research direction opens if confirmed or refuted
+
+Return as JSON array:
+[
+  {{"assumption": "...", "evidence": "WEAK", "test": "...", "opens": "..."}},
+  ...
+]"""
+
+        assumptions_response = await self.llm_client.ainvoke(assumptions_prompt)
+
+        # Step 2: Build a hypothesis from the most impactful assumption
+        synthesis_prompt = f"""Based on the following analysis of untested assumptions in the field of:
+{research_goal.description}
+{constraints_block}
+
+UNTESTED ASSUMPTIONS IDENTIFIED:
+{assumptions_response}
+
+Select the most impactful assumption (preferring those with WEAK or no evidence) and construct
+a complete, testable hypothesis using conditional reasoning:
+
+IF [assumption A] is true, THEN [intermediate conclusion B] follows,
+WHICH ENABLES [experiment C] that tests [deeper question D].
+
+Build this into a rigorous experimental proposal.
+{existing_block}
+
+Return ONLY valid JSON:
+{{
+    "title": "Brief hypothesis title",
+    "statement": "Full hypothesis statement built from the reasoning chain",
+    "rationale": "Why this assumption is worth testing and the reasoning chain",
+    "mechanism": "Proposed mechanism connecting assumption to prediction",
+    "experimental_protocol": {{
+        "objective": "What the experiment aims to test",
+        "methodology": "Experimental approach",
+        "controls": ["Control 1", "Control 2"],
+        "expected_outcomes": ["Outcome 1", "Outcome 2"],
+        "success_criteria": "What constitutes success",
+        "materials": ["Key reagent/strain 1"],
+        "limitations": ["Known limitation 1"],
+        "estimated_timeline": "Estimated duration"
+    }},
+    "citations": [{{"title": "Paper", "doi": "", "relevance": "Why relevant"}}]
+}}"""
+
+        synthesis = await self.llm_client.ainvoke(synthesis_prompt)
+        data = parse_llm_json(synthesis, agent_name="GenerationAgent-Assumptions")
+
+        protocol_data = data.get("experimental_protocol", {})
+        for k in ("controls", "expected_outcomes", "materials", "limitations"):
+            if isinstance(protocol_data.get(k), str):
+                protocol_data[k] = [protocol_data[k]]
+        for k in ("objective", "methodology", "success_criteria", "estimated_timeline"):
+            if isinstance(protocol_data.get(k), list):
+                protocol_data[k] = "\n".join(str(x) for x in protocol_data[k])
+        protocol_data.setdefault("objective", "")
+        protocol_data.setdefault("methodology", "")
+        protocol_data.setdefault("controls", [])
+        protocol_data.setdefault("expected_outcomes", [])
+        protocol_data.setdefault("success_criteria", "")
+
+        hypothesis = Hypothesis(
+            id=generate_hypothesis_id(),
+            research_goal_id=research_goal.id,
+            title=data.get("title", "Untitled"),
+            summary=data.get("statement", "")[:200],
+            hypothesis_statement=data.get("statement", ""),
+            rationale=data.get("rationale", ""),
+            mechanism=data.get("mechanism", ""),
+            experimental_protocol=ExperimentalProtocol(**protocol_data),
+            literature_citations=[
+                Citation(**c) for c in data.get("citations", [])
+                if isinstance(c, dict) and c.get("title")
+            ],
+            generation_method=GenerationMethod.ITERATIVE_ASSUMPTIONS.value,
+            elo_rating=1200.0
+        )
+
+        self.logger.info(
+            "Assumptions hypothesis generated",
+            hypothesis_id=hypothesis.id,
+            title=hypothesis.title,
+        )
+        return hypothesis
+
     async def _generate_via_expansion(
         self,
         research_goal: ResearchGoal,
@@ -791,6 +915,18 @@ Return ONLY valid JSON:
                     error=str(e)
                 )
                 literature_context = self._search_tavily_fallback(research_goal)
+
+        # Route to iterative assumptions pathway if requested
+        if method == GenerationMethod.ITERATIVE_ASSUMPTIONS:
+            hypothesis = await self._generate_via_iterative_assumptions(
+                research_goal=research_goal,
+                existing_titles=existing_titles,
+            )
+            if hypothesis is not None:
+                if use_literature_expansion:
+                    hypothesis = await self._validate_citations(hypothesis, citation_graph)
+                return hypothesis
+            self.logger.info("assumptions_fallback_to_literature")
 
         # Route to debate pathway if requested
         if method == GenerationMethod.SIMULATED_DEBATE:
