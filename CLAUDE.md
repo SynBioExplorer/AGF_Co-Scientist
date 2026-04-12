@@ -187,6 +187,149 @@ Three critical issues were identified and fixed to align the implementation with
 
 ---
 
+## Session History: Paper-Feature-Complete Overhaul (April 2026)
+
+The system was heavily overhauled across ~15 commits to close paper feature gaps, fix latent pipeline bugs, and harden the tournament. The system is now **feature-complete vs the Google paper** (all 4 generation methods, all review types, all 7 evolution strategies) with several extensions beyond the paper.
+
+### How the system actually runs
+
+**Entry point:** `/tmp/run_coscientist.py` (CLI) or `src/api/main.py` (FastAPI).
+
+The CLI script:
+1. `load_dotenv('03_architecture/.env')` BEFORE any src imports (critical - LangSmith checks env vars at import time)
+2. Builds a `ResearchGoal` with `description`, `constraints`, `preferences`
+3. `SupervisorAgent(async_storage).execute(goal, max_iterations=20)`
+4. Dumps JSON to `data/runs/run_<timestamp>.json` + generates interactive HTML report via `src/utils/html_report.py`
+
+**Execution flow per iteration (supervisor.py `_execute_iteration`):**
+- Phase 1 (parallel): GENERATION + PROXIMITY
+- Phase 2 (parallel): REFLECTION + OBSERVATION_REVIEW
+- Phase 3 (parallel): RANKING + EVOLUTION
+- Phase 4: META_REVIEW (also generates research overview in-iteration)
+
+Termination: convergence >= 0.85 OR quality threshold met OR max iterations OR time limit OR budget exceeded. Blocked until every hypothesis has at least 1 tournament match.
+
+### Generation methods (all 4 paper methods now implemented)
+
+| Method | Weight | Implementation |
+|--------|--------|----------------|
+| LITERATURE_EXPLORATION | 30% | `_generate_via_literature` via `02_Prompts/01_*.txt` |
+| SIMULATED_DEBATE | 30% | `_generate_via_debate` - 3 expert personas, 3 turns + synthesis |
+| RESEARCH_EXPANSION | 25% | `_generate_via_expansion` - uses research_overview to target gaps |
+| ITERATIVE_ASSUMPTIONS | 15% | `_generate_via_iterative_assumptions` - identify untested assumptions + reasoning chain |
+
+Random weighted selection per generation task (`supervisor.py:621`).
+
+### Review types (all paper types)
+
+| Type | Purpose |
+|------|---------|
+| INITIAL | Quick pass/fail screen |
+| FULL | Stricter review with citation verification, assumption probing, **biochemical compatibility check** (cofactor, substrate, environment, host, binding-domain) |
+| DEEP_VERIFICATION | Decomposes hypothesis into assumptions, classifies fundamental vs non-fundamental |
+| OBSERVATION | Validates hypothesis against literature observations (separate `ObservationReviewAgent`) |
+
+### Tournament (paper Section 3.3.3 + extensions)
+
+- Elo-based (K=32, initial 1200)
+- Multi-turn debate runs BEFORE winner decision; transcript fed to decision prompt
+- **Newcomer pairing tier (30% of budget)**: unmatched hypotheses paired against top-50%
+- Within-cluster, cross-cluster, elite tiers (from proximity graph)
+- Cross-iteration pair exclusion via `self._used_match_pairs`
+- Cannot terminate while any hypothesis has 0 matches
+
+### Session improvements (bugs fixed + features added)
+
+**Pipeline bugs fixed:**
+- Task queue double-free (get_next_task was deleting tasks before update_task_status could find them)
+- Tasks created via `_create_task_for_agent` fallback never registered in queue
+- Evolution silently dropped `parent_hypothesis_ids` due to schema mismatch
+- `generate_research_overview` failed every call due to `tracing_v2_enabled` (async context manager) called from sync code - fixed by making `trace_run` a no-op passthrough
+- Research overview never generated during iterations (only at run end) - now fires after each meta-review
+- Evolution got stuck on single parent (10x evolved) - added top-5 selection with 3-parent cooldown
+- Tournament monoculture (4 unique winners across 24 matches) - added newcomer pairing tier
+- Early termination before late-arriving hypotheses could compete
+
+**Quality improvements:**
+- `ResearchGoal.constraints` now flows through all prompts (was defined in schema but never injected)
+- Biochemical compatibility checklist added to FULL review
+- Existing titles passed to generation for deduplication
+- Semantic theme-saturation warning (keyword-based, fires when any theme >40% of pool)
+- Phased milestones with go/no-go criteria required in all generation prompts
+- Materials, limitations, estimated_timeline required in protocol
+- Citations required (including in iterative_assumptions path)
+- Evolution generates new summary instead of inheriting parent's (was causing label/content mismatch)
+- Evolution retries once on truncated JSON from Gemini
+
+**Infrastructure:**
+- LangSmith tracing: EU endpoint (`eu.api.smith.langchain.com`), PAT token, project `AGF-co-scientist`
+- LLM clients read API keys from `os.environ` first, settings fallback (for per-request API middleware)
+- Interactive HTML report (`src/utils/html_report.py`) - self-contained with Plotly, filterable cards
+- Safety threshold default 0.0 (disabled)
+
+**Paper features completed:**
+- Iterative assumptions generation method (was a stub enum)
+- Observation review as a separate agent class (paper describes it as a review subtype)
+
+### Extensions beyond the paper
+
+1. Citation graph expansion (PubMed + Semantic Scholar merger, backward traversal)
+2. Paper quality scoring (recency, citations, journal tier, retraction filtering)
+3. Refutation search (actively seeks contradictory evidence, checks retraction status)
+4. Biochemical compatibility validation in FULL review
+5. Cost tracking with AUD budget enforcement
+6. Safety agent as separate gatekeeper
+7. Existing-title deduplication across all generation methods
+8. Evolution parent rotation
+9. Newcomer tournament pairing
+10. Interactive HTML report generation
+
+### Open improvement opportunities
+
+**High-impact (next session):**
+- Elo K-factor tuning (currently 32, paper doesn't specify)
+- Proximity agent is O(n²) LLM calls - wire embedding client or use batched call
+- Simulation review (`ReviewType.SIMULATION`) - mentioned in paper but not implemented
+- Scientist-in-the-loop mid-run feedback injection
+
+**Medium-impact:**
+- Research contacts from citation graph (paper describes this, our meta_review mentions contacts but doesn't link to real authors)
+- Richer embeddings for proximity (currently LLM similarity scoring is slow and approximate)
+- Per-hypothesis cost accounting (currently global budget only)
+
+**Systematic quality issues observed in grant panel reviews:**
+- LLM generates creative ideas but **routinely stacks 5+ unvalidated modules** (feasibility scores 3-5/10 across every run)
+- Recurring biochemical errors: Wza topology confusion, PhaB cofactor specificity, VHb as O2 consumer (not carrier), CBD binding non-cellulose EPS
+- Phased milestones now required but LLM may treat as optional - monitor next run
+- Thematic monoculture can shift to new cluster each run (buoyancy in run 4). Keyword-based detection may need expansion
+
+### Running the system
+
+```bash
+# 1. Activate env
+conda activate coscientist
+
+# 2. Launch CLI run in background
+cd "Google co-scientist"
+python /tmp/run_coscientist.py > /tmp/coscientist-run.log 2>&1 &
+
+# 3. Monitor
+tail -f /tmp/coscientist-run.log
+grep "iteration_complete" /tmp/coscientist-run.log
+
+# 4. View results
+open data/runs/run_<timestamp>.html
+```
+
+Typical run: 20 iterations × ~10 min = 2-3 hours, 40-60 hypotheses, $2-5 USD in Gemini costs.
+
+**Monitoring during run:**
+- `grep -c "task_execution_failed"` - should stay 0
+- `grep -oE "method=[a-z_]+" | sort | uniq -c` - all 4 methods firing
+- `grep "research_overview_generated"` - should appear by iteration 3
+- `grep "MUST propose something"` - theme saturation warning firing
+- Traces: https://eu.smith.langchain.com (`AGF-co-scientist` project)
+
 ## Notes
 
 - All hypotheses require human expert validation
