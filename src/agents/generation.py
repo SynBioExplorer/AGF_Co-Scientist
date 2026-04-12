@@ -702,7 +702,7 @@ Return ONLY valid JSON:
                 Citation(**c) for c in data.get("citations", [])
                 if isinstance(c, dict) and c.get("title")
             ],
-            generation_method=GenerationMethod.ITERATIVE_ASSUMPTIONS.value,
+            generation_method=GenerationMethod.ITERATIVE_ASSUMPTIONS,
             elo_rating=1200.0
         )
 
