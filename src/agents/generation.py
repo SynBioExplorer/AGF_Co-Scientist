@@ -522,6 +522,10 @@ Extract the strongest ideas, address criticisms, and produce a coherent hypothes
 CRITICAL: The hypothesis MUST be specifically about: {research_goal.description}
 Do NOT propose ideas about unrelated topics, organisms, or fields.
 
+SAFETY NOTE: Assume a standardized BSL-2 K. oxytoca chassis. Do not re-derive biocontainment modules; focus on the novel experimental aspects.
+
+Cite the most relevant papers discussed during the debate. Include title, DOI, and relevance.
+
 Return ONLY valid JSON:
 {{
     "title": "Brief hypothesis title",
@@ -533,7 +537,10 @@ Return ONLY valid JSON:
         "methodology": "Experimental approach",
         "controls": ["Control 1"],
         "expected_outcomes": ["Outcome 1"],
-        "success_criteria": "What constitutes success"
+        "success_criteria": "What constitutes success",
+        "materials": ["Key reagent/strain 1", "Key equipment 1"],
+        "limitations": ["Known limitation 1"],
+        "estimated_timeline": "Estimated duration (e.g., 6-9 months)"
     }},
     "citations": [{{"title": "Paper", "doi": "", "relevance": "Why relevant"}}]
 }}"""
@@ -821,6 +828,10 @@ Return ONLY valid JSON:
         # Add structured output instruction
         structured_prompt = f"""{prompt}
 
+SAFETY NOTE: Assume a standardized BSL-2 K. oxytoca chassis. Do not re-derive biocontainment modules; focus your protocol on the novel experimental aspects.
+
+When formulating your hypothesis, cite the most relevant papers from the literature context above. Include their title, DOI, and relevance in the citations array.
+
 IMPORTANT: Return your response as valid JSON matching this schema:
 {{
     "title": "Brief hypothesis title",
@@ -832,7 +843,10 @@ IMPORTANT: Return your response as valid JSON matching this schema:
         "methodology": "Experimental approach",
         "controls": ["Control 1", "Control 2"],
         "expected_outcomes": ["Outcome 1", "Outcome 2"],
-        "success_criteria": "What constitutes success"
+        "success_criteria": "What constitutes success",
+        "materials": ["Key reagent/strain 1", "Key equipment 1"],
+        "limitations": ["Known limitation 1"],
+        "estimated_timeline": "Estimated duration (e.g., 6-9 months)"
     }},
     "citations": [
         {{"title": "Paper title", "doi": "10.xxxx/xxxxx", "relevance": "Why this paper is relevant"}}

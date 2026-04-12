@@ -94,6 +94,7 @@ Your evolved hypothesis MUST directly address this research goal. Do NOT propose
 IMPORTANT: Return your response as valid JSON matching this schema:
 {{
     "title": "Brief hypothesis title",
+    "summary": "One-sentence summary of the evolved hypothesis",
     "statement": "Full hypothesis statement",
     "rationale": "Scientific reasoning",
     "mechanism": "Proposed mechanism",
@@ -169,7 +170,7 @@ Respond with ONLY the JSON object, no additional text."""
                 id=generate_hypothesis_id(),
                 research_goal_id=hypothesis.research_goal_id,
                 title=data.get("title", hypothesis.title),
-                summary=hypothesis.summary,  # Keep original summary
+                summary=data.get("summary", data.get("statement", "")[:200]),
                 hypothesis_statement=data.get("statement", hypothesis.hypothesis_statement),
                 rationale=data.get("rationale", hypothesis.rationale),
                 mechanism=data.get("mechanism", hypothesis.mechanism),

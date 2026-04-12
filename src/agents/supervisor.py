@@ -624,7 +624,7 @@ Respond with ONLY the JSON object."""
                     GenerationMethod.SIMULATED_DEBATE,
                     GenerationMethod.RESEARCH_EXPANSION,
                 ],
-                weights=[0.55, 0.25, 0.20], k=1
+                weights=[0.35, 0.35, 0.30], k=1
             )[0]
             return AgentTask(
                 id=generate_task_id(),
