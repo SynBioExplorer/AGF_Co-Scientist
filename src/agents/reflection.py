@@ -465,6 +465,13 @@ CONSTRAINTS (the hypothesis must satisfy these; flag violations):
         # Add structured output instruction
         structured_prompt = f"""{prompt}
 
+FEASIBILITY RUBRIC (be strict — module stacking is the #1 driver of grant-panel rejection):
+Count unvalidated modules (pathway steps, regulators, protein chimeras, cofactors,
+sensors) that have NOT been demonstrated to work in the host organism or a close relative.
+- 0 unvalidated modules → feasibility_score 0.9-1.0
+- 1-2 unvalidated modules with literature precedent → 0.6-0.8
+- 3+ stacked unvalidated modules, OR missing cofactor / host capability / reagent → <0.3
+
 IMPORTANT: Return your response as valid JSON matching this schema:
 {{
     "passed": true/false,
@@ -474,6 +481,7 @@ IMPORTANT: Return your response as valid JSON matching this schema:
     "novelty_score": 0.0-1.0,
     "testability_score": 0.0-1.0,
     "safety_score": 0.0-1.0,
+    "feasibility_score": 0.0-1.0,
     "strengths": ["Strength 1", "Strength 2"],
     "weaknesses": ["Weakness 1", "Weakness 2"],
     "suggestions": ["Suggestion 1", "Suggestion 2"],
@@ -512,6 +520,7 @@ Respond with ONLY the JSON object, no additional text."""
                 novelty_score=data.get("novelty_score"),
                 testability_score=data.get("testability_score"),
                 safety_score=data.get("safety_score"),
+                feasibility_score=data.get("feasibility_score"),
                 strengths=data.get("strengths", []),
                 weaknesses=data.get("weaknesses", []),
                 suggestions=data.get("suggestions", []),

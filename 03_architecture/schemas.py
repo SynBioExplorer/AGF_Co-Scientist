@@ -274,6 +274,11 @@ class ExperimentalProtocol(BaseModel):
     estimated_timeline: Optional[str] = Field(
         None, description="Estimated time to complete"
     )
+    phased_milestones: list[dict] = Field(
+        default_factory=list,
+        description="Ordered phases with keys 'phase' (str) and 'go_no_go' (str); "
+        "enforces risk-tiered validation before committing to downstream modules.",
+    )
 
 
 # =============================================================================
@@ -307,6 +312,14 @@ class Review(BaseModel):
     )
     safety_score: Optional[float] = Field(
         None, ge=0.0, le=1.0, description="Safety/ethics assessment"
+    )
+    feasibility_score: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="Realism of implementation. 1.0 = every module previously demonstrated; "
+        "0.5 = 1-2 unvalidated modules with tractable risk; "
+        "0.0 = 3+ stacked unvalidated modules or missing cofactors/host capability.",
     )
 
     # Qualitative feedback

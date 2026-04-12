@@ -251,9 +251,12 @@ class TournamentRanker:
         hyp_map = {h.id: h for h in ranked}
         cluster_map = self._build_cluster_map(proximity_graph)
 
-        # Calculate target number of matches by type
+        # Calculate target number of matches by type. Budget scales with the
+        # pool so large populations (40+ hypotheses) can clear newcomers within
+        # a few iterations instead of leaving ~50% unmatched at termination.
         total_possible = len(ranked) * (len(ranked) - 1) // 2
-        target_total = min(20, total_possible)  # Limit total matches
+        target_total = max(20, int(len(ranked) * 0.5))
+        target_total = min(target_total, total_possible)
 
         # Merge excluded pairs from prior iterations
         used_pairs: Set[Tuple[str, str]] = set(exclude_pairs or set())

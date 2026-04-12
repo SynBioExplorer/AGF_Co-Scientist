@@ -588,10 +588,57 @@ Respond with ONLY the JSON object."""
                 if _error is None:
                     executed_count += 1
 
+        # After all phases: guarantee top-N hypotheses (by INITIAL quality_score)
+        # get a FULL review next iteration, independent of the INITIAL-pass
+        # cascade. Fixes FULL review starvation seen in prior runs (~8% rate).
+        await self._queue_full_reviews_for_top_initial(research_goal.id, top_n=5)
+
         logger.info(
             "iteration_tasks_executed",
             count=executed_count,
             queue_stats=self.task_queue.get_statistics()
+        )
+
+    async def _queue_full_reviews_for_top_initial(
+        self, goal_id: str, top_n: int = 5
+    ) -> None:
+        """Queue FULL reviews for top-N hypotheses by INITIAL quality_score.
+
+        Independent of the INITIAL-pass → FULL cascade so hypotheses with
+        borderline `passed=false` but high quality still get deeper review.
+        """
+        all_reviews = await self.storage.get_all_reviews(goal_id=goal_id)
+        initials = [
+            r for r in all_reviews
+            if r.review_type == ReviewType.INITIAL
+            and r.quality_score is not None
+        ]
+        already_full = {
+            r.hypothesis_id for r in all_reviews
+            if r.review_type == ReviewType.FULL
+        }
+        candidates = sorted(
+            [r for r in initials if r.hypothesis_id not in already_full],
+            key=lambda r: r.quality_score,
+            reverse=True,
+        )[:top_n]
+
+        for r in candidates:
+            self.task_queue.add_task(AgentTask(
+                id=generate_task_id(),
+                agent_type=AgentType.REFLECTION,
+                task_type="review_hypothesis",
+                priority=8,
+                parameters={
+                    "hypothesis_id": r.hypothesis_id,
+                    "review_type": ReviewType.FULL.value,
+                },
+                status="pending",
+            ))
+        logger.info(
+            "full_review_queued_top_n",
+            goal_id=goal_id,
+            n=len(candidates),
         )
 
     async def _create_task_for_agent(
@@ -677,12 +724,13 @@ Respond with ONLY the JSON object."""
                         )
 
         elif agent_type == AgentType.RANKING:
-            # Find hypotheses for tournament
+            # Find hypotheses for tournament. A hypothesis is eligible only
+            # once an actual Review row exists for it — prevents unreviewed
+            # defaults (Elo=1200) from appearing in top-N rankings.
             hypotheses = await self.storage.get_hypotheses_by_goal(goal_id)
-            reviewed = [
-                h for h in hypotheses
-                if h.status != HypothesisStatus.GENERATED
-            ]
+            all_reviews_for_goal = await self.storage.get_all_reviews(goal_id=goal_id)
+            reviewed_ids = {r.hypothesis_id for r in all_reviews_for_goal}
+            reviewed = [h for h in hypotheses if h.id in reviewed_ids]
             if len(reviewed) >= 2:
                 # Annotate each hypothesis with match count so the ranker
                 # can prioritize newcomers (paper: "newer hypotheses prioritized")
