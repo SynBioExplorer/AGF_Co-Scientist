@@ -98,23 +98,12 @@ def trace_run(
         return
 
     try:
-        from langchain_core.tracers.context import tracing_v2_enabled
-        import asyncio
-
-        # tracing_v2_enabled is an async context manager in newer langchain.
-        # When called from sync code (e.g., generate_research_overview),
-        # using it as a sync context manager causes "generator didn't stop
-        # after throw()". Skip tracing for sync callers; the LLM client
-        # callbacks still trace individual calls.
-        if asyncio.get_event_loop().is_running():
-            with tracing_v2_enabled(
-                project_name=os.getenv("LANGSMITH_PROJECT", os.getenv("LANGCHAIN_PROJECT", "ai-coscientist")),
-                tags=tags or [],
-            ):
-                yield None
-        else:
-            # Sync context: skip tracing_v2_enabled to avoid async/sync conflict
-            yield None
+        # tracing_v2_enabled is an async context manager that crashes when
+        # called from sync code within an async event loop ("generator didn't
+        # stop after throw()"). Since individual LLM calls are already traced
+        # via callback handlers (self.callbacks in google.py/openai.py),
+        # trace_run just needs to be a no-op passthrough.
+        yield None
     except Exception as e:
         logger.warning("trace_run_failed", error=str(e))
         yield None
