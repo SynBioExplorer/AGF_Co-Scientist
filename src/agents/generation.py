@@ -607,6 +607,32 @@ Return ONLY valid JSON:
             existing_block = "\nExisting hypotheses (propose something DIFFERENT):\n" + "\n".join(
                 f"- {t}" for t in existing_titles[:15]
             )
+            # Detect thematic monoculture
+            if len(existing_titles) > 5:
+                from collections import Counter as _Counter
+                _themes = _Counter()
+                for _t in existing_titles:
+                    _tl = _t.lower()
+                    if any(k in _tl for k in ['nif', 'nitrogen', 'diazotrop', 'ammonia']):
+                        _themes['nitrogen fixation'] += 1
+                    elif any(k in _tl for k in ['eps', 'capsul', 'exopoly']):
+                        _themes['EPS/capsule'] += 1
+                    elif any(k in _tl for k in ['redox', 'bdo', 'butanediol', 'nadh']):
+                        _themes['redox/BDO'] += 1
+                    elif any(k in _tl for k in ['buoyanc', 'gas vesicle', 'float']):
+                        _themes['buoyancy'] += 1
+                    elif any(k in _tl for k in ['biofilm', 'toggle', 'hyster']):
+                        _themes['biofilm circuits'] += 1
+                    else:
+                        _themes['other'] += 1
+                if _themes:
+                    _dominant = _themes.most_common(1)[0]
+                    if _dominant[1] / len(existing_titles) > 0.4:
+                        existing_block += (
+                            f"\nWARNING: {_dominant[1]}/{len(existing_titles)} existing hypotheses "
+                            f"are about '{_dominant[0]}'. You MUST propose something in a "
+                            f"DIFFERENT thematic area.\n"
+                        )
 
         constraints_block = ""
         if research_goal.constraints:
@@ -653,6 +679,15 @@ WHICH ENABLES [experiment C] that tests [deeper question D].
 
 Build this into a rigorous experimental proposal.
 {existing_block}
+
+Cite relevant published papers that support or test each assumption in the reasoning chain.
+Include title, DOI, and relevance in the citations array.
+
+IMPORTANT: All experimental protocol fields are REQUIRED. You must provide:
+- materials: at least 3 key reagents, strains, or equipment items
+- limitations: at least 2 known limitations or risks
+- estimated_timeline: realistic duration estimate (e.g., "6-9 months")
+Do not leave any protocol field empty.
 
 Return ONLY valid JSON:
 {{
@@ -966,11 +1001,38 @@ Return ONLY valid JSON:
         )
 
         # Add structured output instruction
-        # Add existing titles for deduplication
+        # Add existing titles for deduplication with theme saturation warning
         existing_block = ""
         if existing_titles:
             titles_list = "\n".join(f"- {t}" for t in existing_titles[:20])
             existing_block = f"\nEXISTING HYPOTHESES in this goal (do NOT duplicate; propose something distinct):\n{titles_list}\n"
+
+            # Detect thematic monoculture and force diversification
+            if len(existing_titles) > 5:
+                from collections import Counter as _Counter
+                _themes = _Counter()
+                for _t in existing_titles:
+                    _tl = _t.lower()
+                    if any(k in _tl for k in ['nif', 'nitrogen', 'diazotrop', 'ammonia']):
+                        _themes['nitrogen fixation'] += 1
+                    elif any(k in _tl for k in ['eps', 'capsul', 'exopoly']):
+                        _themes['EPS/capsule'] += 1
+                    elif any(k in _tl for k in ['redox', 'bdo', 'butanediol', 'nadh']):
+                        _themes['redox/BDO'] += 1
+                    elif any(k in _tl for k in ['buoyanc', 'gas vesicle', 'float']):
+                        _themes['buoyancy'] += 1
+                    elif any(k in _tl for k in ['biofilm', 'toggle', 'hyster']):
+                        _themes['biofilm circuits'] += 1
+                    else:
+                        _themes['other'] += 1
+                if _themes:
+                    _dominant = _themes.most_common(1)[0]
+                    if _dominant[1] / len(existing_titles) > 0.4:
+                        existing_block += (
+                            f"\nWARNING: {_dominant[1]}/{len(existing_titles)} existing hypotheses "
+                            f"are about '{_dominant[0]}'. You MUST propose something in a "
+                            f"DIFFERENT thematic area to ensure diversity.\n"
+                        )
 
         structured_prompt = f"""{prompt}
 {existing_block}
