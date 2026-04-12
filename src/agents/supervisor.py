@@ -1200,6 +1200,23 @@ Respond with ONLY the JSON object."""
         # can terminate the workflow.
         min_iterations_before_stop = max(5, int(self.max_iterations * 0.7))
 
+        # Check that every hypothesis has at least 1 match before allowing
+        # termination. Without this, late-arriving hypotheses never compete.
+        all_matches = await self.storage.get_all_matches(stats.research_goal_id)
+        hypotheses = await self.storage.get_hypotheses_by_goal(stats.research_goal_id)
+        matched_ids = set()
+        for m in (all_matches or []):
+            matched_ids.add(m.hypothesis_a_id)
+            matched_ids.add(m.hypothesis_b_id)
+        unmatched = [h for h in hypotheses if h.id not in matched_ids]
+        if unmatched:
+            logger.info(
+                "termination_blocked_unmatched",
+                unmatched_count=len(unmatched),
+                total=len(hypotheses),
+            )
+            return False, None
+
         # Check tournament convergence
         if stats.tournament_convergence_score >= convergence_threshold:
             if self.iteration >= min_iterations_before_stop:
