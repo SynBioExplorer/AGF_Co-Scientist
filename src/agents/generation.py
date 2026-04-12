@@ -528,6 +528,8 @@ Do NOT propose ideas about unrelated topics, organisms, or fields.
 
 Cite the most relevant papers discussed during the debate. Include title, DOI, and relevance.
 
+Design the experiment in 2-3 phases with explicit go/no-go criteria. Phase 1 must validate the single highest-risk component before integration.
+
 Return ONLY valid JSON:
 {{
     "title": "Brief hypothesis title",
@@ -542,7 +544,11 @@ Return ONLY valid JSON:
         "success_criteria": "What constitutes success",
         "materials": ["Key reagent/strain 1", "Key equipment 1"],
         "limitations": ["Known limitation 1"],
-        "estimated_timeline": "Estimated duration (e.g., 6-9 months)"
+        "estimated_timeline": "Estimated duration (e.g., 6-9 months)",
+        "phased_milestones": [
+            {{"phase": "Phase 1: Validate highest-risk component", "go_no_go": "Criteria to proceed"}},
+            {{"phase": "Phase 2: Integrate and test", "go_no_go": "Criteria for success"}}
+        ]
     }},
     "citations": [{{"title": "Paper", "doi": "", "relevance": "Why relevant"}}]
 }}"""
@@ -687,7 +693,10 @@ IMPORTANT: All experimental protocol fields are REQUIRED. You must provide:
 - materials: at least 3 key reagents, strains, or equipment items
 - limitations: at least 2 known limitations or risks
 - estimated_timeline: realistic duration estimate (e.g., "6-9 months")
+- phased_milestones: 2-3 phases with go/no-go criteria
 Do not leave any protocol field empty.
+
+Design the experiment in 2-3 phases. Phase 1 must validate the single highest-risk component before integration. Do not propose a fully integrated system without intermediate validation steps.
 
 Return ONLY valid JSON:
 {{
@@ -703,7 +712,11 @@ Return ONLY valid JSON:
         "success_criteria": "What constitutes success",
         "materials": ["Key reagent/strain 1"],
         "limitations": ["Known limitation 1"],
-        "estimated_timeline": "Estimated duration"
+        "estimated_timeline": "Estimated duration",
+        "phased_milestones": [
+            {{"phase": "Phase 1: Validate highest-risk component", "go_no_go": "Criteria to proceed"}},
+            {{"phase": "Phase 2: Integrate and test", "go_no_go": "Criteria for success"}}
+        ]
     }},
     "citations": [{{"title": "Paper", "doi": "", "relevance": "Why relevant"}}]
 }}"""
@@ -1038,6 +1051,8 @@ Return ONLY valid JSON:
 {existing_block}
 When formulating your hypothesis, cite the most relevant papers from the literature context above. Include their title, DOI, and relevance in the citations array.
 
+Design the experiment in 2-3 phases with explicit go/no-go criteria. Phase 1 must validate the single highest-risk component before integration. Do not propose a fully integrated system without intermediate validation steps.
+
 IMPORTANT: Return your response as valid JSON matching this schema:
 {{
     "title": "Brief hypothesis title",
@@ -1052,7 +1067,11 @@ IMPORTANT: Return your response as valid JSON matching this schema:
         "success_criteria": "What constitutes success",
         "materials": ["Key reagent/strain 1", "Key equipment 1"],
         "limitations": ["Known limitation 1"],
-        "estimated_timeline": "Estimated duration (e.g., 6-9 months)"
+        "estimated_timeline": "Estimated duration (e.g., 6-9 months)",
+        "phased_milestones": [
+            {{"phase": "Phase 1: Validate highest-risk component", "go_no_go": "Criteria to proceed"}},
+            {{"phase": "Phase 2: Integrate and test", "go_no_go": "Criteria for success"}}
+        ]
     }},
     "citations": [
         {{"title": "Paper title", "doi": "10.xxxx/xxxxx", "relevance": "Why this paper is relevant"}}
