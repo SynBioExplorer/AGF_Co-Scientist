@@ -35,6 +35,7 @@ if LANGSMITH_ENABLED:
 if LANGSMITH_ENABLED:
     try:
         from langsmith import Client
+        from langsmith import trace as langsmith_trace
         from langchain_core.tracers.langchain import LangChainTracer
 
         # Initialize LangSmith client
@@ -48,8 +49,10 @@ if LANGSMITH_ENABLED:
         )
         LANGSMITH_ENABLED = False
         langsmith_client = None
+        langsmith_trace = None
 else:
     langsmith_client = None
+    langsmith_trace = None
     logger.info("langsmith_disabled")
 
 
@@ -92,20 +95,26 @@ def trace_run(
         with trace_run("generate_hypothesis", metadata={"goal_id": "abc"}):
             result = generate_hypothesis(goal)
     """
-    if not LANGSMITH_ENABLED:
-        # No-op when tracing is disabled
+    if not LANGSMITH_ENABLED or langsmith_trace is None:
+        # No-op when tracing is disabled or langsmith unavailable
         yield None
         return
 
     try:
-        # tracing_v2_enabled is an async context manager that crashes when
-        # called from sync code within an async event loop ("generator didn't
-        # stop after throw()"). Since individual LLM calls are already traced
-        # via callback handlers (self.callbacks in google.py/openai.py),
-        # trace_run just needs to be a no-op passthrough.
-        yield None
+        # langsmith.trace is sync/async-safe (contextvar-based, not an async
+        # context manager) — unlike tracing_v2_enabled which crashes when
+        # entered from sync code inside an async event loop. LangChainTracer
+        # callbacks on LLM clients pick up this parent span automatically
+        # via contextvars, restoring per-agent hierarchy in the UI.
+        with langsmith_trace(
+            name=name,
+            run_type=run_type,
+            metadata=metadata or {},
+            tags=tags or [],
+        ):
+            yield None
     except Exception as e:
-        logger.warning("trace_run_failed", error=str(e))
+        logger.warning("trace_run_failed", name=name, error=str(e))
         yield None
 
 

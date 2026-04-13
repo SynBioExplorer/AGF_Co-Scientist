@@ -31,12 +31,14 @@ class GoogleGeminiClient(BaseLLMClient):
     - Handles both sync and async invocations
     """
 
-    def __init__(self, model: str, agent_name: str):
+    def __init__(self, model: str, agent_name: str, thinking_budget: int | None = None):
         """Initialize Google Gemini client.
 
         Args:
             model: Model name (e.g., 'gemini-3-pro-preview').
             agent_name: Name of the agent using this client (for cost tracking).
+            thinking_budget: Cap on reasoning tokens. 0 disables reasoning for
+                JSON-structured tasks (ranking, proximity). None = unconstrained.
         """
         cost_tracker = get_tracker(budget_aud=settings.budget_aud)
         super().__init__(model, cost_tracker)
@@ -45,20 +47,24 @@ class GoogleGeminiClient(BaseLLMClient):
         # Prefer env var (set per-request by API middleware) over frozen settings
         import os
         api_key = os.environ.get("GOOGLE_API_KEY") or settings.google_api_key
-        self.llm = ChatGoogleGenerativeAI(
-            model=model,
-            google_api_key=api_key,
-            temperature=0.7,
-            max_output_tokens=8192,
-            callbacks=self.callbacks  # Add tracing callbacks
-        )
+        kwargs = {
+            "model": model,
+            "google_api_key": api_key,
+            "temperature": 0.7,
+            "max_output_tokens": 8192,
+            "callbacks": self.callbacks,
+        }
+        if thinking_budget is not None:
+            kwargs["thinking_budget"] = thinking_budget
+        self.llm = ChatGoogleGenerativeAI(**kwargs)
 
         logger.info(
             "google_client_initialized",
             model=model,
             agent=agent_name,
             timeout=settings.llm_timeout_seconds,
-            max_retries=settings.llm_max_retries
+            max_retries=settings.llm_max_retries,
+            thinking_budget=thinking_budget,
         )
 
     def _extract_content(self, response) -> str:
