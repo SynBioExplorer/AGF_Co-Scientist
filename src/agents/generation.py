@@ -578,7 +578,11 @@ Return ONLY valid JSON:
                 methodology=_coerce(protocol_data.get("methodology", ""), as_list=False),
                 controls=_coerce(protocol_data.get("controls", []), as_list=True),
                 expected_outcomes=_coerce(protocol_data.get("expected_outcomes", []), as_list=True),
-                success_criteria=_coerce(protocol_data.get("success_criteria", ""), as_list=False)
+                success_criteria=_coerce(protocol_data.get("success_criteria", ""), as_list=False),
+                materials=_coerce(protocol_data.get("materials", []), as_list=True),
+                limitations=_coerce(protocol_data.get("limitations", []), as_list=True),
+                estimated_timeline=protocol_data.get("estimated_timeline"),
+                phased_milestones=protocol_data.get("phased_milestones", []) or [],
             ),
             literature_citations=[
                 Citation(**c) for c in data.get("citations", [])
@@ -866,7 +870,11 @@ Return ONLY valid JSON:
                 methodology=_coerce(protocol_data.get("methodology", ""), as_list=False),
                 controls=_coerce(protocol_data.get("controls", []), as_list=True),
                 expected_outcomes=_coerce(protocol_data.get("expected_outcomes", []), as_list=True),
-                success_criteria=_coerce(protocol_data.get("success_criteria", ""), as_list=False)
+                success_criteria=_coerce(protocol_data.get("success_criteria", ""), as_list=False),
+                materials=_coerce(protocol_data.get("materials", []), as_list=True),
+                limitations=_coerce(protocol_data.get("limitations", []), as_list=True),
+                estimated_timeline=protocol_data.get("estimated_timeline"),
+                phased_milestones=protocol_data.get("phased_milestones", []) or [],
             ),
             literature_citations=[
                 Citation(**c) for c in data.get("citations", [])

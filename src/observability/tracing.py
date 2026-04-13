@@ -114,8 +114,13 @@ def trace_run(
         ):
             yield None
     except Exception as e:
+        # A @contextmanager generator must yield exactly once. If an exception
+        # propagates into our `yield` via .throw(), we log and re-raise so the
+        # caller sees the original error (e.g. parse_llm_json truncation).
+        # Yielding a second time here would raise "generator didn't stop after
+        # throw()" and mask the real exception.
         logger.warning("trace_run_failed", name=name, error=str(e))
-        yield None
+        raise
 
 
 def trace_agent(agent_name: str) -> Callable:

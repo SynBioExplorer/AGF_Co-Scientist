@@ -472,6 +472,24 @@ sensors) that have NOT been demonstrated to work in the host organism or a close
 - 1-2 unvalidated modules with literature precedent → 0.6-0.8
 - 3+ stacked unvalidated modules, OR missing cofactor / host capability / reagent → <0.3
 
+KNOWN BIOCHEMICAL MISCONCEPTIONS (deduct 0.3 from feasibility_score per instance observed;
+flag the specific error in `weaknesses`; flag any reuse as a correctness_score failure):
+- "Vitreoscilla hemoglobin (VHb) shields / sponges / scavenges / protects from O2."
+  WRONG. VHb binds O2 and DELIVERS it to the terminal oxidase, supporting respiration
+  at low pO2. It does NOT shield nitrogenase or other O2-sensitive enzymes.
+- "Pfk-2 / phosphofructokinase-2 as a glycolytic flux booster in Klebsiella."
+  WRONG. PFP / Pfk-2 is the pyrophosphate-dependent plant/protist enzyme; not
+  functional or annotated as a glycolytic enzyme in *K. oxytoca*.
+- "sucCD (succinyl-CoA ligase) as a heme-biosynthesis bypass."
+  WRONG. Heme biosynthesis consumes succinyl-CoA via ALA synthase (hemA), not via
+  sucCD. sucCD converts succinyl-CoA → succinate, pulling flux AWAY from heme.
+- "Wza exports soluble cytoplasmic cargo via the Type II secretion / IM-to-OM conduit."
+  WRONG. Wza is the outer-membrane translocon for the K-antigen capsule polysaccharide,
+  not a general protein/small-molecule export route.
+- "CBD (cellulose-binding domain) binds the K. oxytoca K-antigen capsule / EPS."
+  WRONG. CBD binds β-1,4-linked glucan (cellulose); K-antigen is a heteropolysaccharide,
+  not cellulose, and the organism is NOT a cellulose producer (unlike, e.g., Gluconacetobacter).
+
 IMPORTANT: Return your response as valid JSON matching this schema:
 {{
     "passed": true/false,

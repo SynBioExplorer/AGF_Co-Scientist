@@ -599,6 +599,40 @@ Respond with ONLY the JSON object."""
             queue_stats=self.task_queue.get_statistics()
         )
 
+    async def _check_duplicate(
+        self,
+        new_hypothesis: Hypothesis,
+        goal_id: str,
+        top_k: int = 5,
+        threshold: float = 0.8,
+    ) -> tuple[float, Optional[str]]:
+        """Check whether new_hypothesis duplicates any of the top-K existing hyps.
+
+        Returns (max_similarity, duplicate_of_id). If no existing hypotheses
+        or all below threshold, returns (0.0, None).
+        """
+        existing = await self.storage.get_hypotheses_by_goal(goal_id)
+        existing = [h for h in existing if h.id != new_hypothesis.id]
+        if not existing:
+            return 0.0, None
+        ranked = sorted(existing, key=lambda h: h.elo_rating, reverse=True)[:top_k]
+
+        proximity = self._get_agent(AgentType.PROXIMITY)
+        max_sim = 0.0
+        dup_of = None
+        for h in ranked:
+            try:
+                sim = proximity._calculate_llm_similarity(new_hypothesis, h)
+            except Exception as e:
+                logger.warning("dedup_similarity_failed", error=str(e))
+                continue
+            if sim > max_sim:
+                max_sim = sim
+                dup_of = h.id
+            if sim >= threshold:
+                return sim, h.id  # short-circuit on first hit
+        return max_sim, dup_of
+
     async def _queue_full_reviews_for_top_initial(
         self, goal_id: str, top_n: int = 5
     ) -> None:
@@ -628,7 +662,7 @@ Respond with ONLY the JSON object."""
                 id=generate_task_id(),
                 agent_type=AgentType.REFLECTION,
                 task_type="review_hypothesis",
-                priority=8,
+                priority=9,  # parity with INITIAL so FULL doesn't starve in queue
                 parameters={
                     "hypothesis_id": r.hypothesis_id,
                     "review_type": ReviewType.FULL.value,
@@ -974,6 +1008,28 @@ Respond with ONLY the JSON object."""
                 except Exception as e:
                     logger.warning("safety_review_skipped", error=str(e))
 
+            # Dedup gate: reject near-duplicates of top-K existing hypotheses
+            # to stop the same idea leaking into top-N rankings multiple times
+            # (Run 7 had 3 duplicate pairs in top-10). Uses proximity agent's
+            # existing LLM similarity scoring; runs only once per new hypothesis.
+            dup_score, dup_of = await self._check_duplicate(
+                hypothesis, research_goal.id, top_k=5, threshold=0.8
+            )
+            if dup_score >= 0.8 and dup_of is not None:
+                logger.warning(
+                    "hypothesis_dedup_rejected",
+                    hypothesis_id=hypothesis.id,
+                    similarity=round(dup_score, 2),
+                    duplicate_of_id=dup_of,
+                    title=hypothesis.title[:80],
+                )
+                return {
+                    "status": "duplicate_rejected",
+                    "hypothesis_id": hypothesis.id,
+                    "similarity": dup_score,
+                    "duplicate_of": dup_of,
+                }
+
             # Keep status as GENERATED (default) so the reflection filler
             # can pick up this hypothesis via get_hypotheses_needing_review.
             # Status will transition to INITIAL_REVIEW after the actual review runs.
@@ -1026,7 +1082,7 @@ Respond with ONLY the JSON object."""
                             id=generate_task_id(),
                             agent_type=AgentType.REFLECTION,
                             task_type="review_hypothesis",
-                            priority=8,
+                            priority=9,  # parity with INITIAL so FULL doesn't starve
                             parameters={
                                 "hypothesis_id": hypothesis.id,
                                 "review_type": ReviewType.FULL.value,
