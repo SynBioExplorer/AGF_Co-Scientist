@@ -85,7 +85,7 @@ class Settings(BaseSettings):
 
     # Supervisor execution timeout (entire workflow iteration)
     supervisor_iteration_timeout: int = 600  # 10 minutes per iteration
-    supervisor_max_execution_seconds: int = 7200  # 2 hours total workflow time (AGENT-C1 fix)
+    supervisor_max_execution_seconds: int = 21600  # 6 hours total workflow time
 
     # Memory cleanup configuration
     task_cleanup_interval_hours: int = 1  # Run cleanup every hour

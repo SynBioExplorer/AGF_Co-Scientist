@@ -1305,18 +1305,43 @@ Respond with ONLY the JSON object."""
         Returns:
             Tuple of (should_stop, reason).
         """
-        # Check time limit (AGENT-C1 fix: prevent infinite loops)
-        elapsed_seconds = (datetime.now() - started_at).total_seconds()
-        if elapsed_seconds > max_execution_time_seconds:
-            elapsed_hours = round(elapsed_seconds / 3600, 2)
-            max_hours = round(max_execution_time_seconds / 3600, 2)
-            return True, f"Maximum execution time exceeded ({elapsed_hours}h / {max_hours}h)"
-
-        # Check budget
+        # Budget exhaustion is the only unconditional terminator. Even when the
+        # time limit has elapsed, we must still finish pairing every hypothesis
+        # in at least one tournament match — otherwise the leaderboard above
+        # rank 1 is just a seeding artefact (observed in 4/5 runs of the
+        # 2026-05-04 batch). Budget is the hard ceiling that protects against
+        # an unmatched-hypothesis loop running forever.
         try:
             self.cost_tracker.check_budget()
         except BudgetExceededError:
             return True, "Budget exhausted"
+
+        # Block termination while any hypothesis has zero tournament matches.
+        # This gate now runs BEFORE the time-limit check so a curtailed
+        # tournament cannot terminate with unranked top-tier hypotheses.
+        all_matches = await self.storage.get_all_matches(stats.research_goal_id)
+        hypotheses = await self.storage.get_hypotheses_by_goal(stats.research_goal_id)
+        matched_ids = set()
+        for m in (all_matches or []):
+            matched_ids.add(m.hypothesis_a_id)
+            matched_ids.add(m.hypothesis_b_id)
+        unmatched = [h for h in hypotheses if h.id not in matched_ids]
+        elapsed_seconds = (datetime.now() - started_at).total_seconds()
+        if unmatched:
+            logger.info(
+                "termination_blocked_unmatched",
+                unmatched_count=len(unmatched),
+                total=len(hypotheses),
+                elapsed_seconds=int(elapsed_seconds),
+                over_time_limit=elapsed_seconds > max_execution_time_seconds,
+            )
+            return False, None
+
+        # Time limit applies only once every hypothesis has at least one match.
+        if elapsed_seconds > max_execution_time_seconds:
+            elapsed_hours = round(elapsed_seconds / 3600, 2)
+            max_hours = round(max_execution_time_seconds / 3600, 2)
+            return True, f"Maximum execution time exceeded ({elapsed_hours}h / {max_hours}h)"
 
         # Don't stop if not enough hypotheses
         if stats.total_hypotheses < min_hypotheses:
@@ -1326,23 +1351,6 @@ Respond with ONLY the JSON object."""
         # This ensures sufficient exploration before convergence checks
         # can terminate the workflow.
         min_iterations_before_stop = max(5, int(self.max_iterations * 0.7))
-
-        # Check that every hypothesis has at least 1 match before allowing
-        # termination. Without this, late-arriving hypotheses never compete.
-        all_matches = await self.storage.get_all_matches(stats.research_goal_id)
-        hypotheses = await self.storage.get_hypotheses_by_goal(stats.research_goal_id)
-        matched_ids = set()
-        for m in (all_matches or []):
-            matched_ids.add(m.hypothesis_a_id)
-            matched_ids.add(m.hypothesis_b_id)
-        unmatched = [h for h in hypotheses if h.id not in matched_ids]
-        if unmatched:
-            logger.info(
-                "termination_blocked_unmatched",
-                unmatched_count=len(unmatched),
-                total=len(hypotheses),
-            )
-            return False, None
 
         # Check tournament convergence
         if stats.tournament_convergence_score >= convergence_threshold:
