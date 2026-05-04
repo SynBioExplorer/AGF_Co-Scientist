@@ -1,0 +1,55 @@
+budget_aud: 155.0  # = 100 USD at the system's hard-coded USD_TO_AUD = 1.55
+max_iterations: 20
+
+# Injected as ResearchGoal.laboratory_context for every goal so the supervisor
+# knows what high-throughput tools are physically available at AGF.
+# Source: 05_Website/update_equipment.py (Macquarie AGF instrument list).
+laboratory_context: |
+  Available high-throughput infrastructure at the Australian Genome Foundry
+  (Macquarie University) - leverage where appropriate, not required:
+  - Acoustic / nanolitre dispensing: Beckman Echo 525, Dispendix iDot, Formulatrix Mantis
+  - Liquid handling robots: 2x Opentrons OT-2, CyBio Felix
+  - High-throughput cultivation: Sartorius ambr 250 (parallel bioreactors),
+    m2p-labs BioLector XT (microbioreactor), Biolog Odin, plate readers
+    (Synergy H1, LogPhase 600)
+  - FACS / flow cytometry (6 instruments, multiple sorters): BD FACSMelody,
+    FACSymphony A1, A5 SE, S6, Beckman Cytoflex S, Accuri C6 - supports TraDISort
+    and other sort-seq workflows
+  - Colony picking and imaging: 2x Singer Pixl, Phenobooth
+  - qPCR: 2x Roche LightCycler 480 II
+  - DNA QC: Agilent ZAG DNA analyser
+  - Long-read sequencing: Oxford Nanopore MinION
+  - Analytical chemistry: Shimadzu GC-MS, LC triple-quadrupole MS, quaternary HPLC
+
+goals:
+  - description: >
+      We have developed a SCRaMbLE system for Vibrio natriegens.
+      What would be interesting experiments to run to take advantage of this system?
+    constraints: []
+    preferences: []
+
+  - description: >
+      If we wanted to undertake metabolic engineering of a fast-growing Synechococcus
+      strain for production of high-value compounds, what would be good target
+      compounds to produce?
+    constraints: []
+    preferences: []
+
+  - description: >
+      If we wanted to undertake further research on the PACE family of bacterial
+      multidrug efflux pumps, what would you recommend?
+    constraints: []
+    preferences: []
+
+  - description: >
+      If we wanted to engineer Yarrowia lipolytica for production of high-value
+      compounds, what would be good target compounds to produce?
+    constraints: []
+    preferences: []
+
+  - description: >
+      If we wanted to undertake TraDISort experiments on Acinetobacter baumannii,
+      what dyes could we use that would allow us to identify important genes
+      for interesting phenotypes?
+    constraints: []
+    preferences: []

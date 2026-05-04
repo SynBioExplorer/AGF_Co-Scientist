@@ -6,6 +6,9 @@
 # Runtime settings (persisted user preferences)
 03_architecture/.runtime_settings.json
 
+# Claude Code local settings
+.claude/
+
 # Python
 __pycache__/
 *.py[cod]
