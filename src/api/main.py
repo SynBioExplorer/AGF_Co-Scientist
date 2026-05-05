@@ -226,7 +226,12 @@ async def inject_api_keys_middleware(request: Request, call_next):
 async def run_supervisor_workflow(
     goal: ResearchGoal,
     max_iterations: int,
-    enable_evolution: bool
+    enable_evolution: bool,
+    tournament_rounds: int | None = None,
+    elo_k_factor: int | None = None,
+    budget_aud: float | None = None,
+    safety_threshold: float | None = None,
+    llm_timeout_seconds: int | None = None,
 ) -> str:
     """Run supervisor-orchestrated workflow asynchronously with timeout protection.
 
@@ -271,8 +276,38 @@ async def run_supervisor_workflow(
         goal_id=goal.id,
         max_iterations=max_iterations,
         enable_evolution=enable_evolution,
-        total_timeout_seconds=total_timeout
+        total_timeout_seconds=total_timeout,
+        tournament_rounds=tournament_rounds,
+        elo_k_factor=elo_k_factor,
+        budget_aud_override=budget_aud,
+        safety_threshold_override=safety_threshold,
+        llm_timeout_override=llm_timeout_seconds,
     )
+
+    # Apply per-run overrides to global settings (mirrors the llm_provider
+    # middleware pattern in this file). Saved values are restored in finally.
+    setting_overrides: dict[str, object] = {}
+    if budget_aud is not None:
+        setting_overrides["budget_aud"] = budget_aud
+    if safety_threshold is not None:
+        setting_overrides["safety_threshold"] = safety_threshold
+    if llm_timeout_seconds is not None:
+        setting_overrides["llm_timeout_seconds"] = llm_timeout_seconds
+
+    original_settings: dict[str, object] = {}
+    for key, value in setting_overrides.items():
+        original_settings[key] = getattr(settings, key)
+        object.__setattr__(settings, key, value)
+
+    # The cost-tracker is a module-level singleton; patch its cap directly so
+    # the override applies even on subsequent runs (the singleton would
+    # otherwise keep the first-seen budget).
+    original_budget_cap = None
+    if budget_aud is not None:
+        from cost_tracker import get_tracker  # 04_Scripts on sys.path via supervisor import
+        live_tracker = get_tracker(budget_aud=settings.budget_aud)
+        original_budget_cap = live_tracker.budget_aud
+        live_tracker.budget_aud = budget_aud
 
     supervisor = SupervisorAgent(storage)
 
@@ -283,7 +318,9 @@ async def run_supervisor_workflow(
         result = await asyncio.wait_for(
             supervisor.execute(
                 research_goal=goal,
-                max_iterations=max_iterations
+                max_iterations=max_iterations,
+                tournament_rounds=tournament_rounds,
+                elo_k_factor=elo_k_factor,
             ),
             timeout=total_timeout
         )
@@ -318,6 +355,14 @@ async def run_supervisor_workflow(
             error_type=type(e).__name__
         )
         return f"ERROR: {str(e)}"
+
+    finally:
+        # Restore overridden settings + budget cap
+        for key, value in original_settings.items():
+            object.__setattr__(settings, key, value)
+        if original_budget_cap is not None:
+            from cost_tracker import get_tracker  # 04_Scripts on sys.path via supervisor import
+            get_tracker(budget_aud=settings.budget_aud).budget_aud = original_budget_cap
 
 
 async def compute_statistics(goal_id: str) -> dict:
@@ -428,7 +473,12 @@ async def submit_goal(request: SubmitGoalWithConfigRequest):
         coroutine=run_supervisor_workflow(
             goal=goal,
             max_iterations=config.max_iterations,
-            enable_evolution=config.enable_evolution
+            enable_evolution=config.enable_evolution,
+            tournament_rounds=config.tournament_rounds,
+            elo_k_factor=config.elo_k_factor,
+            budget_aud=config.budget_aud,
+            safety_threshold=config.safety_threshold,
+            llm_timeout_seconds=config.llm_timeout_seconds,
         ),
         timeout_seconds=total_timeout
     )

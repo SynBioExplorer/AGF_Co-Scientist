@@ -34,7 +34,9 @@ class RankingAgent(BaseAgent):
         hypothesis_b: Hypothesis,
         method: str = "tournament",  # "tournament" or "debate"
         multi_turn: bool = False,
-        goal: str = ""
+        goal: str = "",
+        num_turns: int = 3,
+        k_factor: int = 32,
     ) -> TournamentMatch:
         """Compare two hypotheses and determine winner
 
@@ -63,7 +65,7 @@ class RankingAgent(BaseAgent):
             debate_turns = self._run_multi_turn_debate(
                 hypothesis_a,
                 hypothesis_b,
-                num_turns=3
+                num_turns=num_turns,
             )
 
         # Format prompt (now with debate transcript if available)
@@ -112,8 +114,7 @@ Respond with ONLY the JSON object, no additional text."""
             if winner_id not in [hypothesis_a.id, hypothesis_b.id]:
                 raise CoScientistError(f"Invalid winner_id: {winner_id}")
 
-            # Calculate Elo changes (basic implementation - will be improved with tournament module)
-            k_factor = 32  # Standard Elo K-factor
+            # Elo update with caller-supplied K-factor (default 32)
             expected_a = 1 / (1 + 10 ** ((hypothesis_b.elo_rating - hypothesis_a.elo_rating) / 400))
             expected_b = 1 - expected_a
 

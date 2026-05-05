@@ -84,6 +84,40 @@ class WorkflowConfigRequest(BaseModel):
         description="Whether to enable web search for literature"
     )
 
+    # Tournament configuration
+    tournament_rounds: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=10,
+        description="Multi-turn debate rounds for top-of-bracket matches (1-10)"
+    )
+    elo_k_factor: Optional[int] = Field(
+        default=None,
+        ge=8,
+        le=64,
+        description="Elo rating sensitivity. Higher = ratings move faster after each match"
+    )
+
+    # Budget / safety / timeout overrides (apply to global settings for this run)
+    budget_aud: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=10000.0,
+        description="Run-level budget cap in AUD. 0 disables enforcement"
+    )
+    safety_threshold: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Safety review threshold (0 disables, 0.5 typical for production)"
+    )
+    llm_timeout_seconds: Optional[int] = Field(
+        default=None,
+        ge=30,
+        le=900,
+        description="Per-LLM-call timeout in seconds"
+    )
+
     # Frontend compatibility - model configuration
     llm_provider: Optional[str] = Field(
         default=None,

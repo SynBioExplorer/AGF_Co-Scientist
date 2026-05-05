@@ -95,6 +95,9 @@ export interface Settings {
   maxIterations: number;
   tournamentRounds: number;
   eloKFactor: number;
+  budgetAud: number;
+  safetyThreshold: number;
+  llmTimeoutSeconds: number;
 
   // Feature toggles
   enableEvolution: boolean;

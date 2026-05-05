@@ -231,7 +231,7 @@ Random weighted selection per generation task (`supervisor.py:621`).
 
 ### Tournament (paper Section 3.3.3 + extensions)
 
-- Elo-based (K=32, initial 1200)
+- Elo-based (K default 32, initial 1200) — K-factor and debate-turn count are now overridable per run via `WorkflowConfigRequest.elo_k_factor` / `tournament_rounds` (UI: ParameterSliders)
 - Multi-turn debate runs BEFORE winner decision; transcript fed to decision prompt
 - **Newcomer pairing tier (30% of budget)**: unmatched hypotheses paired against top-50%
 - Within-cluster, cross-cluster, elite tiers (from proximity graph)
@@ -266,6 +266,7 @@ Random weighted selection per generation task (`supervisor.py:621`).
 - LLM clients read API keys from `os.environ` first, settings fallback (for per-request API middleware)
 - Interactive HTML report (`src/utils/html_report.py`) - self-contained with Plotly, filterable cards
 - Safety threshold default 0.0 (disabled)
+- Frontend `ParameterSliders` (`frontend/src/components/settings/ParameterSliders.tsx`) and `WorkflowConfigRequest` (`src/api/models.py`) now expose: `max_iterations`, `tournament_rounds`, `elo_k_factor`, `budget_aud`, `safety_threshold`, `llm_timeout_seconds`. Overrides flow through `run_supervisor_workflow` → `SupervisorAgent.execute(...)` and the cost-tracker singleton; settings are restored after the run via the same finally-block pattern used for the LLM provider header. Sliders persist via Zustand `persist`, so the next run defaults to the previous run's values.
 
 **Paper features completed:**
 - Iterative assumptions generation method (was a stub enum)
@@ -287,7 +288,7 @@ Random weighted selection per generation task (`supervisor.py:621`).
 ### Open improvement opportunities
 
 **High-impact (next session):**
-- Elo K-factor tuning (currently 32, paper doesn't specify)
+- Elo K-factor is now user-tunable from the frontend (default 32) — empirical tuning still TODO
 - Proximity agent is O(n²) LLM calls - wire embedding client or use batched call
 - Simulation review (`ReviewType.SIMULATION`) - mentioned in paper but not implemented
 - Scientist-in-the-loop mid-run feedback injection

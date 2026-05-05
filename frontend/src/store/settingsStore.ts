@@ -22,6 +22,9 @@ interface SettingsState {
   maxIterations: number;
   tournamentRounds: number;
   eloKFactor: number;
+  budgetAud: number;
+  safetyThreshold: number;
+  llmTimeoutSeconds: number;
 
   // Features
   enableEvolution: boolean;
@@ -42,6 +45,9 @@ interface SettingsState {
   setMaxIterations: (max: number) => void;
   setTournamentRounds: (rounds: number) => void;
   setEloKFactor: (k: number) => void;
+  setBudgetAud: (aud: number) => void;
+  setSafetyThreshold: (threshold: number) => void;
+  setLlmTimeoutSeconds: (seconds: number) => void;
   setEnableEvolution: (enabled: boolean) => void;
   setEnableWebSearch: (enabled: boolean) => void;
   setEnableLiteratureSearch: (enabled: boolean) => void;
@@ -63,8 +69,11 @@ export const useSettingsStore = create<SettingsState>()(
       pubmedApiKey: '',
       langsmithApiKey: '',
       maxIterations: 20,
-      tournamentRounds: 5,
+      tournamentRounds: 3,
       eloKFactor: 32,
+      budgetAud: 50,
+      safetyThreshold: 0,
+      llmTimeoutSeconds: 300,
       enableEvolution: true,
       enableWebSearch: true,
       enableLiteratureSearch: false,
@@ -96,6 +105,9 @@ export const useSettingsStore = create<SettingsState>()(
       setMaxIterations: (max) => set({ maxIterations: max }),
       setTournamentRounds: (rounds) => set({ tournamentRounds: rounds }),
       setEloKFactor: (k) => set({ eloKFactor: k }),
+      setBudgetAud: (aud) => set({ budgetAud: aud }),
+      setSafetyThreshold: (threshold) => set({ safetyThreshold: threshold }),
+      setLlmTimeoutSeconds: (seconds) => set({ llmTimeoutSeconds: seconds }),
       setEnableEvolution: (enabled) => set({ enableEvolution: enabled }),
       setEnableWebSearch: (enabled) => set({ enableWebSearch: enabled }),
       setEnableLiteratureSearch: (enabled) => set({ enableLiteratureSearch: enabled }),

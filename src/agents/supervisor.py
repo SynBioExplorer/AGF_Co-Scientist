@@ -107,6 +107,10 @@ class SupervisorAgent(BaseAgent):
         self.safety_agent = SafetyAgent()
         self.safety_threshold = settings.safety_threshold
 
+        # Tournament knobs (overridable via execute() kwargs)
+        self.tournament_rounds: int = 3
+        self.elo_k_factor: int = 32
+
         # Context memory for self-improving loop (Paper Section 3.1)
         self._context_insights: list[str] = []
         self._explored_directions: list[str] = []
@@ -230,6 +234,8 @@ class SupervisorAgent(BaseAgent):
         quality_threshold: float = 0.85,
         convergence_threshold: float = 0.9,
         max_execution_time_seconds: int | None = None,
+        tournament_rounds: int | None = None,
+        elo_k_factor: int | None = None,
     ) -> str:
         """Run supervisor orchestration loop.
 
@@ -254,6 +260,12 @@ class SupervisorAgent(BaseAgent):
             goal=research_goal.description[:100],
             max_iterations=max_iterations
         )
+
+        # Apply tournament overrides for this run (fall back to defaults if None)
+        if tournament_rounds is not None:
+            self.tournament_rounds = tournament_rounds
+        if elo_k_factor is not None:
+            self.elo_k_factor = elo_k_factor
 
         # Store research goal
         await self.storage.add_research_goal(research_goal)
@@ -1122,6 +1134,8 @@ Respond with ONLY the JSON object."""
                     hypothesis_b=h_b,
                     multi_turn=True,
                     goal=research_goal.description,
+                    num_turns=self.tournament_rounds,
+                    k_factor=self.elo_k_factor,
                 )
                 await self.storage.add_match(match)
 

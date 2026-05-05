@@ -65,6 +65,11 @@ export const createGoal = async (data: {
       max_iterations: settings.maxIterations,
       enable_evolution: settings.enableEvolution,
       enable_web_search: settings.enableWebSearch,
+      tournament_rounds: settings.tournamentRounds,
+      elo_k_factor: settings.eloKFactor,
+      budget_aud: settings.budgetAud,
+      safety_threshold: settings.safetyThreshold,
+      llm_timeout_seconds: settings.llmTimeoutSeconds,
     },
   });
   return response.data;
