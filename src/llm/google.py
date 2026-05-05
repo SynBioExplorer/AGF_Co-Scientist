@@ -89,45 +89,53 @@ class GoogleGeminiClient(BaseLLMClient):
         return str(response.content)
 
     def _estimate_tokens(self, text: str) -> int:
-        """Estimate token count for text.
-
-        Uses a conservative multiplier for scientific/technical content
-        which tends to have more tokens than simple text.
-
-        Args:
-            text: Text to estimate tokens for.
-
-        Returns:
-            Estimated token count.
-        """
-        # Use 1.5x multiplier for scientific content (more conservative than 1.3x)
-        # This accounts for technical terms, equations, and specialized vocabulary
+        # Last-resort fallback only — used when the SDK does not return
+        # usage_metadata. Real billing uses SDK token counts via _extract_usage.
         word_count = len(text.split())
         return int(word_count * 1.5)
 
-    def _do_invoke(self, prompt: str) -> str:
-        """Internal sync invoke without retry (for use with retry wrapper).
+    def _extract_usage(self, response, prompt: str, content: str) -> tuple[int, int]:
+        """Return (input_tokens, output_tokens) for billing.
 
-        Args:
-            prompt: The prompt to send.
-
-        Returns:
-            Response content.
+        Prefers SDK-reported counts from response.usage_metadata. For Gemini,
+        thinking/reasoning tokens are billed as output but live in a separate
+        field (thoughts_token_count or output_token_details.reasoning) — we
+        add them so the tracker matches Google's actual billing. Falls back
+        to the word-count estimator only if usage_metadata is unavailable.
         """
+        in_tok = out_tok = None
+        reasoning_tok = 0
+
+        usage = getattr(response, "usage_metadata", None)
+        if isinstance(usage, dict):
+            in_tok = usage.get("input_tokens") or usage.get("prompt_tokens")
+            out_tok = usage.get("output_tokens") or usage.get("completion_tokens")
+            details = usage.get("output_token_details") or {}
+            if isinstance(details, dict):
+                reasoning_tok = int(details.get("reasoning") or details.get("thoughts") or 0)
+
+        meta = getattr(response, "response_metadata", None) or {}
+        raw = meta.get("usage_metadata") if isinstance(meta, dict) else None
+        if isinstance(raw, dict):
+            if in_tok is None:
+                in_tok = raw.get("prompt_token_count") or raw.get("input_token_count")
+            if out_tok is None:
+                out_tok = raw.get("candidates_token_count") or raw.get("output_token_count")
+            if not reasoning_tok:
+                reasoning_tok = int(raw.get("thoughts_token_count") or 0)
+
+        if in_tok is None or out_tok is None:
+            return self._estimate_tokens(prompt), self._estimate_tokens(content)
+
+        return int(in_tok), int(out_tok) + reasoning_tok
+
+    def _do_invoke(self, prompt: str):
         response = self.llm.invoke(prompt)
-        return self._extract_content(response)
+        return self._extract_content(response), response
 
-    async def _do_ainvoke(self, prompt: str) -> str:
-        """Internal async invoke without retry (for use with retry wrapper).
-
-        Args:
-            prompt: The prompt to send.
-
-        Returns:
-            Response content.
-        """
+    async def _do_ainvoke(self, prompt: str):
         response = await self.llm.ainvoke(prompt)
-        return self._extract_content(response)
+        return self._extract_content(response), response
 
     def invoke(self, prompt: str) -> str:
         """Invoke Gemini synchronously with retry and cost tracking.
@@ -144,15 +152,13 @@ class GoogleGeminiClient(BaseLLMClient):
         """
         try:
             # Use sync retry wrapper
-            content = sync_retry(
+            content, response = sync_retry(
                 self._do_invoke,
                 prompt,
                 operation_name=f"Gemini invoke ({self.agent_name})"
             )
 
-            # Atomically check budget and track usage after successful call
-            input_tokens = self._estimate_tokens(prompt)
-            output_tokens = self._estimate_tokens(content)
+            input_tokens, output_tokens = self._extract_usage(response, prompt, content)
 
             self.cost_tracker.check_and_add_usage(
                 agent=self.agent_name,
@@ -212,16 +218,14 @@ class GoogleGeminiClient(BaseLLMClient):
         """
         try:
             # Use async retry wrapper with timeout
-            content = await retry_async(
+            content, response = await retry_async(
                 self._do_ainvoke,
                 prompt,
                 timeout=settings.llm_timeout_seconds,
                 operation_name=f"Gemini ainvoke ({self.agent_name})"
             )
 
-            # Atomically check budget and track usage after successful call
-            input_tokens = self._estimate_tokens(prompt)
-            output_tokens = self._estimate_tokens(content)
+            input_tokens, output_tokens = self._extract_usage(response, prompt, content)
 
             self.cost_tracker.check_and_add_usage(
                 agent=self.agent_name,
