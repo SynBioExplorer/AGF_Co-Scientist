@@ -30,6 +30,7 @@ dependencies:
   # Visualization
   - plotly            # Elo rating charts, tournament visualization
   - matplotlib        # Static plots
+  - pillow            # AGF logo embedding in HTML reports
 
   # PDF Processing
   - pypdf
