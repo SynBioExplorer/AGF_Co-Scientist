@@ -855,6 +855,13 @@ app.include_router(documents_router, prefix="/api/v1", tags=["Documents"])
 from src.api.settings import router as settings_router
 app.include_router(settings_router, tags=["Settings"])
 
+# Phase A: setup wizard + secrets + email export
+from src.api.setup import router as setup_router
+app.include_router(setup_router, tags=["Setup"])
+
+from src.api.export import router as export_router
+app.include_router(export_router, tags=["Export"])
+
 
 # ==============================================================================
 # Run server

@@ -1,0 +1,52 @@
+appId: com.agf.coscientist
+productName: AGF Co-Scientist
+copyright: Copyright (c) 2026 AGF Co-Scientist
+directories:
+  output: dist
+  buildResources: release/v0.1.0/build
+files:
+  - "release/v0.1.0/desktop/**/*"
+  - "frontend/dist/**/*"
+  - "package.json"
+extraResources:
+  - from: release/v0.1.0/desktop/resources/sidecar
+    to: sidecar
+    filter:
+      - "**/*"
+mac:
+  target:
+    target: dmg
+    arch:
+      - universal
+  icon: release/v0.1.0/build/icon.icns
+  category: public.app-category.education
+  darkModeSupport: true
+  hardenedRuntime: false
+  gatekeeperAssess: false
+win:
+  target:
+    target: nsis
+    arch:
+      - x64
+  icon: release/v0.1.0/build/icon.ico
+linux:
+  target:
+    target: AppImage
+    arch:
+      - x64
+  icon: release/v0.1.0/build/icon.png
+  category: Science
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  artifactName: "${productName}-${version}-setup.${ext}"
+dmg:
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+appImage:
+  artifactName: "${productName}-${version}.${ext}"
+publish:
+  provider: github
+  owner: synbioexplorer
+  repo: agf_co-scientist
+  releaseType: release

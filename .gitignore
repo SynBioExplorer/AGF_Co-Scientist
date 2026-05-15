@@ -9,23 +9,34 @@
 # Claude Code local settings
 .claude/
 
+# Node / Electron build output
+node_modules/
+release/*/desktop/resources/sidecar/
+release/*/build/pyinstaller-work/
+release/*/build/__pycache__/
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
 develop-eggs/
 dist/
+# NOTE: build/ used to be ignored here to mask Python build artefacts,
+# but we now use build/ for the electron-builder + PyInstaller pipeline.
+# Per-file artefact rules below:
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
-parts/
+# Anchor virtualenv directory names to repo root so they don't swallow
+# nested directories that legitimately share these common names (e.g.
+# `frontend/src/v2/lib/`, which is React code, not a Python venv).
+/lib/
+/lib64/
+/parts/
+/var/
 sdist/
-var/
 wheels/
 *.egg-info/
 .installed.cfg

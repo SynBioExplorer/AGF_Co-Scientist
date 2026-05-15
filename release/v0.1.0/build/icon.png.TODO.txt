@@ -1,0 +1,24 @@
+build/icon.png — placeholder
+=============================
+
+This file is a TODO marker. electron-builder will look for:
+
+  - build/icon.png   (Linux, AppImage)
+  - build/icon.icns  (macOS, .dmg)
+  - build/icon.ico   (Windows, NSIS)
+
+If these are not present at build time, electron-builder falls back to
+the default Electron icon and emits a warning. To generate them from
+the master 1024 x 1024 PNG at `desktop/icon.png`, see the instructions
+in `desktop/icon.png.TODO.txt`.
+
+For a quick, decent placeholder you can run (any platform with
+ImageMagick installed):
+
+    magick -size 1024x1024 xc:'#1e3a8a' \
+           -gravity center -pointsize 360 -fill white \
+           -annotate +0+0 'AGF' \
+           build/icon.png
+
+then derive `icon.ico` / `icon.icns` per the platform commands listed in
+`desktop/icon.png.TODO.txt`.

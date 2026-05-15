@@ -23,7 +23,7 @@ from src.storage.base import BaseStorage
 logger = structlog.get_logger()
 
 # Valid storage backends
-StorageBackend = Literal["memory", "postgres", "cached"]
+StorageBackend = Literal["memory", "sqlite", "postgres", "cached"]
 
 
 def get_storage(
@@ -75,6 +75,19 @@ def get_storage(
         from src.storage.memory import InMemoryStorage
         return InMemoryStorage()
 
+    elif backend == "sqlite":
+        from src.storage.sqlite_store import SQLiteStorage
+        # database_url here can optionally hold a "sqlite:///path" or raw path.
+        path: Optional[str] = None
+        if database_url:
+            if database_url.startswith("sqlite:///"):
+                path = database_url[len("sqlite:///"):]
+            elif database_url.startswith("sqlite://"):
+                path = database_url[len("sqlite://"):]
+            else:
+                path = database_url
+        return SQLiteStorage(db_path=path)
+
     elif backend == "postgres":
         from src.storage.postgres import PostgreSQLStorage
 
@@ -96,7 +109,24 @@ def get_storage(
         return CachedStorage(pg_storage, cache)
 
     else:
-        raise ValueError(f"Unknown storage backend: {backend}. Valid options: memory, postgres, cached")
+        raise ValueError(
+            f"Unknown storage backend: {backend}. "
+            f"Valid options: memory, sqlite, postgres, cached"
+        )
+
+
+def create_storage(
+    backend: Optional[StorageBackend] = None,
+    **kwargs,
+) -> BaseStorage:
+    """Alias for :func:`get_storage` matching the Phase 5 spec.
+
+    Example::
+
+        store = create_storage("sqlite")
+        await store.connect()
+    """
+    return get_storage(backend=backend, **kwargs)
 
 
 async def create_and_connect_storage(

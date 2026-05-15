@@ -28,7 +28,12 @@ Usage:
 
 from src.storage.base import BaseStorage
 from src.storage.memory import InMemoryStorage, SyncInMemoryStorage, storage
-from src.storage.factory import get_storage, create_and_connect_storage, StorageContext
+from src.storage.factory import (
+    get_storage,
+    create_and_connect_storage,
+    StorageContext,
+    create_storage,
+)
 from src.storage.async_adapter import AsyncStorageAdapter, async_storage
 
 # Export all public classes and functions
@@ -43,11 +48,18 @@ __all__ = [
     "async_storage",
     # Factory
     "get_storage",
+    "create_storage",
     "create_and_connect_storage",
     "StorageContext",
     # Global instance for backward compatibility
     "storage",
 ]
+
+
+def get_sqlite_storage():
+    """Get SQLiteStorage class (lazy import)."""
+    from src.storage.sqlite_store import SQLiteStorage
+    return SQLiteStorage
 
 # Lazy imports for optional backends (avoid import errors if deps missing)
 def get_postgres_storage():
