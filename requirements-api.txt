@@ -47,6 +47,9 @@ tenacity>=8.0
 python-dotenv>=1.0
 aiofiles>=23.0
 
+# HTML report logo embedding (resize + base64-inline of AusGenome_LOGO_MAIN.png)
+pillow>=10.0
+
 # Note: heavy ML/literature deps (chromadb, faiss-cpu, sentence-transformers,
 # pymupdf, networkx, scikit-learn) remain in 03_architecture/environment.yml.
 # Phase 5 CI tests don't exercise those paths.
