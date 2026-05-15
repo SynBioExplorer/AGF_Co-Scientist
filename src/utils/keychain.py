@@ -44,12 +44,26 @@ except Exception:  # pragma: no cover
     KeyringError = Exception  # type: ignore
     _KEYRING_AVAILABLE = False
 
-try:
-    from cryptography.fernet import Fernet  # type: ignore
-    _CRYPTOGRAPHY_AVAILABLE = True
-except Exception:  # pragma: no cover
-    Fernet = None  # type: ignore
-    _CRYPTOGRAPHY_AVAILABLE = False
+Fernet = None  # type: ignore  # populated lazily by _get_fernet_class
+_CRYPTOGRAPHY_AVAILABLE: Optional[bool] = None
+
+
+def _get_fernet_class():
+    """Lazy-import cryptography.Fernet -- some platforms blow up at import
+    time when the installed cryptography package mismatches the runtime.
+    """
+    global Fernet, _CRYPTOGRAPHY_AVAILABLE
+    if Fernet is not None:
+        return Fernet
+    try:
+        from cryptography.fernet import Fernet as _F  # type: ignore
+
+        Fernet = _F
+        _CRYPTOGRAPHY_AVAILABLE = True
+        return Fernet
+    except Exception:
+        _CRYPTOGRAPHY_AVAILABLE = False
+        return None
 
 
 SERVICE_NAME = "agf-coscientist"
@@ -85,7 +99,7 @@ def _keyring_usable() -> bool:
 
 
 def _derive_fernet_key() -> bytes:
-    if not _CRYPTOGRAPHY_AVAILABLE:
+    if _get_fernet_class() is None:
         raise RuntimeError(
             "cryptography is not installed - cannot use fallback secret store"
         )
@@ -118,7 +132,10 @@ def _fallback_conn() -> sqlite3.Connection:
 
 
 def _fallback_set(key: str, value: str) -> None:
-    fernet = Fernet(_derive_fernet_key())
+    fernet_cls = _get_fernet_class()
+    if fernet_cls is None:
+        raise RuntimeError("cryptography not available; cannot persist secret")
+    fernet = fernet_cls(_derive_fernet_key())
     blob = fernet.encrypt(value.encode("utf-8"))
     conn = _fallback_conn()
     try:
@@ -147,7 +164,10 @@ def _fallback_get(key: str) -> Optional[str]:
         conn.close()
     if not row:
         return None
-    fernet = Fernet(_derive_fernet_key())
+    fernet_cls = _get_fernet_class()
+    if fernet_cls is None:
+        return None
+    fernet = fernet_cls(_derive_fernet_key())
     try:
         return fernet.decrypt(row[0]).decode("utf-8")
     except Exception:

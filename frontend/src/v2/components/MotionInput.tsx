@@ -24,7 +24,6 @@ export const MotionInput = React.forwardRef<HTMLInputElement, MotionInputProps>(
           </label>
         ) : null}
         <motion.div
-          whileFocus={{ scale: 1.005 }}
           transition={springSoft}
           className={cn(
             'flex items-center gap-2 rounded-xl border bg-white px-3 py-2 transition-colors',
