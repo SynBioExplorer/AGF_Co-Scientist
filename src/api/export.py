@@ -23,6 +23,11 @@ from src.utils.paths import get_default_export_dir
 
 router = APIRouter(prefix="/api", tags=["export"])
 
+# Run IDs are written by the supervisor and look like `goal_20260413_035527_<hash>`.
+# Restrict to a safe character set so a crafted ID can't escape the export dir
+# via `..` segments when `_locate_run_artifacts` walks candidate folders.
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
 
 class EmailExportResponse(BaseModel):
     mailto_url: str
@@ -126,6 +131,8 @@ def _summarize_for_email(json_path: Optional[Path]) -> str:
     "/runs/{run_id}/export/email", response_model=EmailExportResponse
 )
 async def export_run_email(run_id: str) -> EmailExportResponse:
+    if not _RUN_ID_RE.fullmatch(run_id):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
     html_path, json_path = _locate_run_artifacts(run_id)
     if html_path is None:
         raise HTTPException(
