@@ -1,0 +1,14 @@
+{
+  "name": "agf-coscientist",
+  "productName": "AGF Co-Scientist",
+  "version": "0.1.0",
+  "description": "AGF Co-Scientist — desktop application wrapping the FastAPI backend and React frontend in an Electron shell.",
+  "main": "main.js",
+  "author": {
+    "name": "AGF Co-Scientist Team",
+    "email": "support@agf-coscientist.example"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "homepage": "https://github.com/synbioexplorer/agf_co-scientist"
+}

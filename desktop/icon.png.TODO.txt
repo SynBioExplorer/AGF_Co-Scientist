@@ -1,0 +1,42 @@
+AGF Co-Scientist — icon placeholder
+====================================
+
+This file is a TODO marker for the application icon.
+
+REQUIRED:
+  desktop/icon.png  — 1024 x 1024 PNG, square, opaque.
+
+The icon should be a high-resolution PNG of the AGF Co-Scientist logo
+(or a temporary placeholder reading "AGF" on a solid background).
+
+How to generate the per-platform icon files from this PNG
+---------------------------------------------------------
+
+1. Install ImageMagick + (macOS only) iconutil.
+
+2. Run from the repository root:
+
+   # macOS .icns (requires macOS host with iconutil)
+   mkdir -p build/icon.iconset
+   sips -z 16 16     desktop/icon.png --out build/icon.iconset/icon_16x16.png
+   sips -z 32 32     desktop/icon.png --out build/icon.iconset/icon_16x16@2x.png
+   sips -z 32 32     desktop/icon.png --out build/icon.iconset/icon_32x32.png
+   sips -z 64 64     desktop/icon.png --out build/icon.iconset/icon_32x32@2x.png
+   sips -z 128 128   desktop/icon.png --out build/icon.iconset/icon_128x128.png
+   sips -z 256 256   desktop/icon.png --out build/icon.iconset/icon_128x128@2x.png
+   sips -z 256 256   desktop/icon.png --out build/icon.iconset/icon_256x256.png
+   sips -z 512 512   desktop/icon.png --out build/icon.iconset/icon_256x256@2x.png
+   sips -z 512 512   desktop/icon.png --out build/icon.iconset/icon_512x512.png
+   cp                desktop/icon.png       build/icon.iconset/icon_512x512@2x.png
+   iconutil -c icns -o build/icon.icns build/icon.iconset
+
+   # Windows .ico (any platform with ImageMagick)
+   magick desktop/icon.png \
+     -define icon:auto-resize=256,128,96,64,48,32,16 \
+     build/icon.ico
+
+   # Linux .png (just copy)
+   cp desktop/icon.png build/icon.png
+
+Until a real icon is supplied, electron-builder will fall back to its
+default Electron icon. The build will still succeed.
