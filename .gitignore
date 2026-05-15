@@ -29,11 +29,14 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
-parts/
+# Anchor virtualenv directory names to repo root so they don't swallow
+# nested directories that legitimately share these common names (e.g.
+# `frontend/src/v2/lib/`, which is React code, not a Python venv).
+/lib/
+/lib64/
+/parts/
+/var/
 sdist/
-var/
 wheels/
 *.egg-info/
 .installed.cfg
