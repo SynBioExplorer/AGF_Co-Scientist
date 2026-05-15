@@ -18,14 +18,9 @@ Public API
 
 Logo discovery
 --------------
-The logo is loaded from the first path that exists:
-
-    1. ``src/utils/assets/AusGenome_LOGO_MAIN.png`` (bundled location — drop the
-       PNG here)
-    2. ``<repo_root>/AusGenome_LOGO_MAIN.png`` (legacy convenience)
-
-If neither exists or Pillow is not installed, the brand row degrades
-gracefully to a text-only label (no broken image icon).
+The logo is loaded from ``src/utils/assets/AusGenome_LOGO_MAIN.png``. If the
+file isn't there or Pillow isn't installed, the brand row degrades gracefully
+to a text-only label (no broken image icon).
 """
 
 from __future__ import annotations
@@ -39,12 +34,7 @@ from pathlib import Path
 from typing import Optional
 
 
-_MODULE_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _MODULE_DIR.parent.parent
-_LOGO_SEARCH_PATHS = (
-    _MODULE_DIR / "assets" / "AusGenome_LOGO_MAIN.png",
-    _REPO_ROOT / "AusGenome_LOGO_MAIN.png",
-)
+_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "AusGenome_LOGO_MAIN.png"
 
 
 # ---------------------------------------------------------------------------
@@ -55,18 +45,17 @@ def _logo_data_uri(target_height_px: int = 96) -> str:
 
     Resizes to ``target_height_px`` (2-3x the intended display height) so the
     embedded PNG stays sharp on retina displays. Returns an empty string when
-    Pillow is missing or no logo file is found anywhere on the search path.
+    Pillow is missing or the logo file isn't present.
     """
     try:
         from PIL import Image  # type: ignore
     except ImportError:
         return ""
 
-    src = next((p for p in _LOGO_SEARCH_PATHS if p.exists()), None)
-    if src is None:
+    if not _LOGO_PATH.exists():
         return ""
 
-    img = Image.open(src).convert("RGBA")
+    img = Image.open(_LOGO_PATH).convert("RGBA")
     w, h = img.size
     new_h = target_height_px
     new_w = int(round(w * new_h / h))
