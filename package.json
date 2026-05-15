@@ -1,7 +1,42 @@
 {
+  "name": "agf-coscientist-desktop",
+  "productName": "AGF Co-Scientist",
+  "version": "0.1.0",
+  "description": "AGF Co-Scientist desktop application (Electron shell around the FastAPI backend + React frontend).",
+  "main": "desktop/main.js",
+  "author": {
+    "name": "AGF Co-Scientist Team",
+    "email": "support@agf-coscientist.example"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "homepage": "https://github.com/synbioexplorer/agf_co-scientist",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/synbioexplorer/agf_co-scientist.git"
+  },
+  "scripts": {
+    "start": "concurrently -k -n FRONTEND,BACKEND,ELECTRON \"npm:start:frontend\" \"npm:start:backend\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
+    "start:frontend": "cd frontend && npm run dev",
+    "start:backend": "python -m uvicorn src.api.main:app --reload --port 8000",
+    "build:frontend": "cd frontend && npm run build",
+    "build:sidecar": "bash build/build-sidecar.sh",
+    "build:sidecar:win": "powershell -ExecutionPolicy Bypass -File build/build-sidecar.ps1",
+    "build:electron": "electron-builder --config build/electron-builder.yml",
+    "build": "npm run build:frontend && npm run build:sidecar && npm run build:electron",
+    "test:electron": "playwright test --config desktop/test/playwright.config.ts"
+  },
   "devDependencies": {
+    "@playwright/test": "^1.48.0",
     "autoprefixer": "^10.4.20",
+    "concurrently": "^9.0.0",
+    "cross-env": "^7.0.3",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "electron-updater": "^6.3.0",
+    "playwright": "^1.48.0",
     "postcss": "^8.4.49",
-    "tailwindcss": "3.3.0"
+    "tailwindcss": "3.3.0",
+    "wait-on": "^8.0.0"
   }
 }

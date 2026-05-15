@@ -22,5 +22,13 @@ httpx  # For TestClient
 # Structured logging
 structlog>=23.2.0
 
+# Phase A (desktop packaging): SQLite, secret storage, encryption fallback
+aiosqlite>=0.20.0
+keyring>=24.0.0
+cryptography>=42.0.0
+
+# Email validation (Pydantic EmailStr field)
+email-validator>=2.0.0
+
 # Note: LangGraph, LangChain, and LLM dependencies are in main environment.yml
 # This file focuses on API-specific dependencies only

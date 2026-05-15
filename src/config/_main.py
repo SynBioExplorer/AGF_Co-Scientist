@@ -1,19 +1,60 @@
 """Configuration management for AI Co-Scientist system"""
 
+import os
 from pydantic_settings import BaseSettings
 from pathlib import Path
 from typing import Literal, List
+
+
+def _bootstrap_from_keychain() -> None:
+    """Populate API key env vars from the OS keychain when missing.
+
+    Called once at import time. We only set env vars that are not already
+    present, so explicit env / .env values always win. Failures here are
+    intentionally silent -- keychain access is optional infrastructure.
+    """
+    key_map = {
+        "GOOGLE_API_KEY": "google_api_key",
+        "OPENAI_API_KEY": "openai_api_key",
+        "DEEPSEEK_API_KEY": "deepseek_api_key",
+        "ANTHROPIC_API_KEY": "anthropic_api_key",
+        "TAVILY_API_KEY": "tavily_api_key",
+        "PUBMED_API_KEY": "pubmed_api_key",
+        "SEMANTIC_SCHOLAR_API_KEY": "semantic_scholar_api_key",
+    }
+    try:
+        from src.utils.keychain import get_secret
+    except Exception:
+        return
+    for env_var, slot in key_map.items():
+        if env_var in os.environ and os.environ[env_var]:
+            continue
+        try:
+            value = get_secret(slot)
+        except Exception:
+            value = None
+        if value:
+            os.environ[env_var] = value
+
+
+# Run keychain bootstrap before Settings instantiates.
+_bootstrap_from_keychain()
 
 
 class Settings(BaseSettings):
     """System settings loaded from environment variables"""
 
     # API Keys
-    google_api_key: str
+    # google_api_key intentionally remains required for backward compatibility
+    # with existing flows. The onboarding wizard ensures it is present before
+    # any agent runs.
+    google_api_key: str | None = None
     openai_api_key: str | None = None
+    deepseek_api_key: str | None = None
     anthropic_api_key: str | None = None
     tavily_api_key: str | None = None
     pubmed_api_key: str | None = None
+    semantic_scholar_api_key: str | None = None
 
     # LangSmith Observability (Phase 5F)
     langchain_tracing_v2: bool = False
@@ -22,11 +63,13 @@ class Settings(BaseSettings):
     langchain_endpoint: str = "https://api.smith.langchain.com"
 
     # LLM Provider Selection (change this to switch providers globally)
-    llm_provider: Literal["google", "openai"] = "google"
+    llm_provider: Literal[
+        "google", "gemini", "openai", "gpt", "deepseek", "anthropic", "claude"
+    ] = "google"
 
     # Storage Configuration (Phase 4 - Database Agent)
-    # Options: "memory" (development), "postgres" (production), "cached" (production + Redis)
-    storage_backend: Literal["memory", "postgres", "cached"] = "memory"
+    # Options: "memory" (development), "sqlite" (desktop), "postgres" (production)
+    storage_backend: Literal["memory", "sqlite", "postgres", "cached"] = "memory"
 
     # PostgreSQL Configuration
     database_url: str = "postgresql://localhost:5432/coscientist"
@@ -174,6 +217,30 @@ class Settings(BaseSettings):
     @property
     def supervisor_model(self) -> str:
         return getattr(self, f"{self.llm_provider}_supervisor_model")
+
+    def get_agent_config(self, agent_name: str) -> dict:
+        """Return the resolved per-agent LLM config.
+
+        Looks up ``agent_models`` overrides (DB-backed; Phase A) and falls
+        back to the global default. The returned dict always contains
+        ``provider``, ``model``, and ``temperature`` keys.
+        """
+        try:
+            from src.config.agent_models import get_agent_runtime_config
+
+            cfg = get_agent_runtime_config(agent_name)
+            if cfg:
+                return cfg
+        except Exception:
+            pass
+        provider = self.llm_provider
+        try:
+            from src.llm import get_default_model
+
+            model = get_default_model(provider)
+        except Exception:
+            model = getattr(self, f"{provider}_generation_model", "")
+        return {"provider": provider, "model": model, "temperature": 0.7}
 
 
 # Global settings instance
