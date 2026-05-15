@@ -23,22 +23,24 @@ export function useTheme(): {
     if (typeof window === 'undefined') return 'system';
     return (window.localStorage.getItem(STORAGE_KEY) as ThemeMode | null) ?? 'system';
   });
-  const [effective, setEffective] = useState<'light' | 'dark'>('light');
+  const [systemIsDark, setSystemIsDark] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
 
   useEffect(() => {
     applyTheme(mode);
-    const isDark = document.documentElement.classList.contains('dark');
-    setEffective(isDark ? 'dark' : 'light');
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     const handler = (): void => {
-      if (mode === 'system') {
-        applyTheme('system');
-        setEffective(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-      }
+      setSystemIsDark(mq.matches);
+      if (mode === 'system') applyTheme('system');
     };
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
   }, [mode]);
+
+  const effective: 'light' | 'dark' =
+    mode === 'system' ? (systemIsDark ? 'dark' : 'light') : mode;
 
   const setMode = useCallback((m: ThemeMode) => {
     setModeState(m);

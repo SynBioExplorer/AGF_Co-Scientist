@@ -9,6 +9,10 @@
 # Claude Code local settings
 .claude/
 
+# Node / Electron build output
+node_modules/
+desktop/resources/sidecar/
+
 # Python
 __pycache__/
 *.py[cod]
