@@ -1,19 +1,22 @@
-# Build pipeline
+# Build pipeline — v0.1.0
 
 This directory contains everything needed to package the AGF Co-Scientist
 desktop application from source.
 
+All build commands assume the **repo root** as the working directory.
+
 ## Pipeline overview
 
 ```
-frontend/  --(vite build)-->  frontend/dist/
-src/api/   --(PyInstaller)-->  desktop/resources/sidecar/agf-coscientist-backend[.exe]
-                              |
-                              v
-                       electron-builder
-                              |
-                              v
-              dist/AGF Co-Scientist-<ver>.{dmg,exe,AppImage}
+frontend/    --(vite build)-->     frontend/dist/
+src/api/     --(PyInstaller)-->    release/v0.1.0/desktop/resources/sidecar/
+                                   agf-coscientist-backend[.exe]
+                                       |
+                                       v
+                                electron-builder
+                                       |
+                                       v
+                          dist/AGF Co-Scientist-<ver>.{dmg,exe,AppImage}
 ```
 
 ## Files
@@ -36,15 +39,16 @@ src/api/   --(PyInstaller)-->  desktop/resources/sidecar/agf-coscientist-backend
 ### macOS
 
 ```bash
+# From repo root:
 # 1. Frontend bundle
 cd frontend && npm ci && npm run build && cd ..
 
 # 2. Python sidecar (produces a universal-2 binary if running on Apple Silicon
 #    with the universal2 Python build).
-bash build/build-sidecar.sh
+bash release/v0.1.0/build/build-sidecar.sh
 
 # 3. .dmg
-npx electron-builder --config build/electron-builder.yml --mac
+npx electron-builder --config release/v0.1.0/build/electron-builder.yml --mac
 ```
 
 Output: `dist/AGF Co-Scientist-<version>-universal.dmg`.
@@ -52,9 +56,10 @@ Output: `dist/AGF Co-Scientist-<version>-universal.dmg`.
 ### Windows
 
 ```powershell
+# From repo root:
 cd frontend; npm ci; npm run build; cd ..
-powershell -File build/build-sidecar.ps1
-npx electron-builder --config build/electron-builder.yml --win
+powershell -File release\v0.1.0\build\build-sidecar.ps1
+npx electron-builder --config release\v0.1.0\build\electron-builder.yml --win
 ```
 
 Output: `dist\AGF Co-Scientist-<version>-setup.exe` (NSIS one-click installer).
@@ -62,9 +67,10 @@ Output: `dist\AGF Co-Scientist-<version>-setup.exe` (NSIS one-click installer).
 ### Linux
 
 ```bash
+# From repo root:
 cd frontend && npm ci && npm run build && cd ..
-bash build/build-sidecar.sh
-npx electron-builder --config build/electron-builder.yml --linux
+bash release/v0.1.0/build/build-sidecar.sh
+npx electron-builder --config release/v0.1.0/build/electron-builder.yml --linux
 ```
 
 Output: `dist/AGF Co-Scientist-<version>.AppImage`.
@@ -78,7 +84,7 @@ GitHub Release; electron-updater consumes them for auto-update on launch.
 
 ## Signing / notarisation
 
-**Not enabled for v1.** Installers are unsigned, so users will see a
+**Not enabled for v0.1.0.** Installers are unsigned, so users will see a
 one-time:
 
 * macOS — "“AGF Co-Scientist” cannot be opened because the developer
@@ -90,3 +96,10 @@ one-time:
 When signing certificates are obtained, populate the standard
 `electron-builder` environment variables (`CSC_LINK`, `CSC_KEY_PASSWORD`,
 `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, etc.) in the CI secrets.
+
+## Future releases
+
+When a v0.2.0 release is cut, copy this folder to `release/v0.2.0/` and
+update version numbers (`package.json`, `release/v0.2.0/desktop/package.json`,
+this README, and the workflow paths). Older release directories can be
+kept around indefinitely as immutable build recipes.

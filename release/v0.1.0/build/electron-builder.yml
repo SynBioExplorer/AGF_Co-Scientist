@@ -3,13 +3,13 @@ productName: AGF Co-Scientist
 copyright: Copyright (c) 2026 AGF Co-Scientist
 directories:
   output: dist
-  buildResources: build
+  buildResources: release/v0.1.0/build
 files:
-  - "desktop/**/*"
+  - "release/v0.1.0/desktop/**/*"
   - "frontend/dist/**/*"
   - "package.json"
 extraResources:
-  - from: desktop/resources/sidecar
+  - from: release/v0.1.0/desktop/resources/sidecar
     to: sidecar
     filter:
       - "**/*"
@@ -18,7 +18,7 @@ mac:
     target: dmg
     arch:
       - universal
-  icon: build/icon.icns
+  icon: release/v0.1.0/build/icon.icns
   category: public.app-category.education
   darkModeSupport: true
   hardenedRuntime: false
@@ -28,13 +28,13 @@ win:
     target: nsis
     arch:
       - x64
-  icon: build/icon.ico
+  icon: release/v0.1.0/build/icon.ico
 linux:
   target:
     target: AppImage
     arch:
       - x64
-  icon: build/icon.png
+  icon: release/v0.1.0/build/icon.png
   category: Science
 nsis:
   oneClick: true

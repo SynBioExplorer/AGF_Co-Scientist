@@ -2,7 +2,7 @@
 # Build the Python sidecar into a single executable using PyInstaller.
 #
 # Output:
-#   desktop/resources/sidecar/agf-coscientist-backend[.exe]
+#   release/v0.1.0/desktop/resources/sidecar/agf-coscientist-backend[.exe]
 #
 # Prerequisites:
 #   - Python 3.11
@@ -10,20 +10,23 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# This script lives at release/v0.1.0/build/, so the repo root is 3 levels up.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RELEASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$RELEASE_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
-OUT_DIR="$REPO_ROOT/desktop/resources/sidecar"
+OUT_DIR="$RELEASE_DIR/desktop/resources/sidecar"
 mkdir -p "$OUT_DIR"
 
 echo "[build-sidecar] cleaning previous build artefacts..."
-rm -rf "$REPO_ROOT/build/pyinstaller-work" || true
+rm -rf "$RELEASE_DIR/build/pyinstaller-work" || true
 
 echo "[build-sidecar] running pyinstaller..."
 python -m PyInstaller \
-  build/pyinstaller.spec \
+  "$RELEASE_DIR/build/pyinstaller.spec" \
   --distpath "$OUT_DIR" \
-  --workpath "$REPO_ROOT/build/pyinstaller-work" \
+  --workpath "$RELEASE_DIR/build/pyinstaller-work" \
   --noconfirm \
   --clean
 

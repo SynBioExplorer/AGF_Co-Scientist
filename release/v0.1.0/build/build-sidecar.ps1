@@ -2,7 +2,7 @@
 # Build the Python sidecar into a single Windows executable via PyInstaller.
 #
 # Output:
-#   desktop\resources\sidecar\agf-coscientist-backend.exe
+#   release\v0.1.0\desktop\resources\sidecar\agf-coscientist-backend.exe
 #
 # Prerequisites:
 #   - Python 3.11 on PATH
@@ -10,21 +10,23 @@
 
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+# This script lives at release\v0.1.0\build\, so the repo root is 3 levels up.
+$ReleaseDir = Resolve-Path (Join-Path $PSScriptRoot "..")
+$RepoRoot = Resolve-Path (Join-Path $ReleaseDir "..\..")
 Set-Location $RepoRoot
 
-$OutDir = Join-Path $RepoRoot "desktop\resources\sidecar"
+$OutDir = Join-Path $ReleaseDir "desktop\resources\sidecar"
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 Write-Host "[build-sidecar] cleaning previous build artefacts..."
-$WorkDir = Join-Path $RepoRoot "build\pyinstaller-work"
+$WorkDir = Join-Path $ReleaseDir "build\pyinstaller-work"
 if (Test-Path $WorkDir) {
     Remove-Item -Recurse -Force $WorkDir
 }
 
 Write-Host "[build-sidecar] running pyinstaller..."
 python -m PyInstaller `
-    "build\pyinstaller.spec" `
+    (Join-Path $ReleaseDir "build\pyinstaller.spec") `
     --distpath $OutDir `
     --workpath $WorkDir `
     --noconfirm `

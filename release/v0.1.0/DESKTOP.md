@@ -83,13 +83,13 @@ npm run build                     # frontend + sidecar + installer
 Output lands in `dist/`. Per-OS targets are configured in `build/electron-builder.yml`.
 
 ### Per-OS native build
-The sidecar is bundled by PyInstaller per platform:
+The sidecar is bundled by PyInstaller per platform (run from repo root):
 ```bash
 # macOS / Linux
-bash build/build-sidecar.sh
+bash release/v0.1.0/build/build-sidecar.sh
 
 # Windows
-powershell build/build-sidecar.ps1
+powershell release\v0.1.0\build\build-sidecar.ps1
 ```
 Then `npm run build:electron` to produce the platform installer.
 

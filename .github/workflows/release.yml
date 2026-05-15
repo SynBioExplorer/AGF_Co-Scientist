@@ -54,19 +54,19 @@ jobs:
 
       - name: Build sidecar (Unix)
         if: runner.os != 'Windows'
-        run: bash build/build-sidecar.sh
+        run: bash release/v0.1.0/build/build-sidecar.sh
 
       - name: Build sidecar (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: powershell -ExecutionPolicy Bypass -File build/build-sidecar.ps1
+        run: powershell -ExecutionPolicy Bypass -File release/v0.1.0/build/build-sidecar.ps1
 
       - name: Build and publish Electron app
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # No signing for v1.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --config build/electron-builder.yml --publish always
+        run: npx electron-builder --config release/v0.1.0/build/electron-builder.yml --publish always
 
       - name: Upload artefacts
         if: always()

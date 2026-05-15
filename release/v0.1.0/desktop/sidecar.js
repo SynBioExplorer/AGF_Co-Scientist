@@ -105,7 +105,8 @@ class SidecarManager {
    * @private
    */
   _spawnDev() {
-    const repoRoot = path.resolve(__dirname, '..');
+    // This file lives at release/v0.1.0/desktop/, so the repo root is 3 levels up.
+    const repoRoot = path.resolve(__dirname, '..', '..', '..');
     const pythonBin = process.env.AGF_PYTHON || 'python';
     this.proc = spawn(
       pythonBin,

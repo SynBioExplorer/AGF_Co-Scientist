@@ -2,12 +2,13 @@
 """
 PyInstaller spec for the AGF Co-Scientist Python sidecar.
 
-Bundles `src/api/main.py` (wrapped in `build/sidecar_entrypoint.py`) plus
-the agent code, prompts, schemas, and `.env.example` template into a
+Bundles `src/api/main.py` (wrapped in `release/v0.1.0/build/sidecar_entrypoint.py`)
+plus the agent code, prompts, schemas, and `.env.example` template into a
 single executable named `agf-coscientist-backend`.
 
-Invoke via:
-    pyinstaller build/pyinstaller.spec --distpath desktop/resources/sidecar --clean
+Invoke from the repo root via the helper scripts:
+    bash release/v0.1.0/build/build-sidecar.sh
+    powershell release/v0.1.0/build/build-sidecar.ps1
 
 Hidden imports cover the dynamic-import surface of FastAPI/uvicorn and the
 LangGraph agent modules that are loaded by string name.
@@ -18,14 +19,14 @@ from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
-# Spec files run with __file__ undefined under some PyInstaller versions —
-# fall back to the CWD which is the repo root when invoked correctly.
+# Spec lives at release/v0.1.0/build/ -- the repo root is 3 levels up.
 try:
     SPEC_DIR = Path(__file__).parent.resolve()
 except NameError:
-    SPEC_DIR = Path.cwd() / "build"
+    SPEC_DIR = Path.cwd() / "release" / "v0.1.0" / "build"
 
-REPO_ROOT = SPEC_DIR.parent
+RELEASE_DIR = SPEC_DIR.parent
+REPO_ROOT = RELEASE_DIR.parent.parent
 
 block_cipher = None
 
@@ -85,7 +86,7 @@ for pkg in ("langchain", "langchain_core", "langgraph", "google", "anthropic"):
 # Analysis / build graph
 # ---------------------------------------------------------------------------
 a = Analysis(
-    [str(REPO_ROOT / "build" / "sidecar_entrypoint.py")],
+    [str(RELEASE_DIR / "build" / "sidecar_entrypoint.py")],
     pathex=[str(REPO_ROOT)],
     binaries=[],
     datas=datas,

@@ -3,7 +3,8 @@
  * and exposes `window.electronAPI` to the renderer.
  *
  * Run with:
- *   npx playwright test desktop/test/app-launches.spec.ts
+ *   npm run test:electron
+ *   (equivalent: npx playwright test --config release/v0.1.0/desktop/test/playwright.config.ts)
  *
  * NOTE: requires a display (or `xvfb-run`) on Linux CI. Skipped automatically
  * in headless environments without a display server.

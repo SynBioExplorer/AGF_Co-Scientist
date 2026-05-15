@@ -97,7 +97,7 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
-          mkdir -p desktop/resources/sidecar
-          echo "placeholder" > desktop/resources/sidecar/agf-coscientist-backend
-          chmod +x desktop/resources/sidecar/agf-coscientist-backend
-          npx electron-builder --config build/electron-builder.yml --linux AppImage --publish never
+          mkdir -p release/v0.1.0/desktop/resources/sidecar
+          echo "placeholder" > release/v0.1.0/desktop/resources/sidecar/agf-coscientist-backend
+          chmod +x release/v0.1.0/desktop/resources/sidecar/agf-coscientist-backend
+          npx electron-builder --config release/v0.1.0/build/electron-builder.yml --linux AppImage --publish never

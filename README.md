@@ -9,6 +9,8 @@ An implementation of [Google's AI Co-Scientist system](01_Paper/01_google_co-sci
 
 ![AI Co-Scientist Workflow](docs/workflow-diagram.svg)
 
+> **Desktop release:** packaged installers (macOS / Windows / Linux) and end-user instructions live in [`release/v0.1.0/DESKTOP.md`](release/v0.1.0/DESKTOP.md).
+
 ---
 
 ## Getting Started
