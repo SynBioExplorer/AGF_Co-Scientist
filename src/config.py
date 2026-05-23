@@ -103,14 +103,36 @@ class Settings(BaseSettings):
     proximity_graph_refresh_frequency: int = 3  # Refresh proximity graph every N iterations
     min_cluster_size_for_pairing: int = 2  # Minimum hypotheses per cluster for pairing
 
+    # B16 fix: self-regulating pool cap. The supervisor stops scheduling new
+    # GENERATION tasks once the hypothesis pool reaches this size, so ranking
+    # can catch up. Default 40 hypotheses; tune empirically after the live run.
+    generation_pool_cap: int = 40
+
+    # B3 fix: time-aware drain phase. When elapsed/budget crosses
+    # drain_phase_start_fraction, the supervisor schedules only RANKING to
+    # cover unmatched hypotheses before terminating. Capped at
+    # drain_max_iterations to avoid runaway tails.
+    drain_phase_start_fraction: float = 0.85
+    drain_max_iterations: int = 5
+
+    # B8 fix: bound FULL-review literature search to N queries per review,
+    # limiting Tavily cost and latency added by re-searching during review.
+    full_review_max_queries: int = 3
+
     # Diversity Sampling Configuration (Phase 6B - UX Enhancement)
     diversity_sampling_enabled: bool = True  # Enable diversity sampling feature
     diversity_sampling_for_overview: bool = True  # Use in final overview generation
     diversity_sampling_min_elo: float = 1200.0  # Minimum Elo rating for selection
     diversity_sampling_default_n: int = 10  # Default number of diverse hypotheses
 
-    # Paths
-    project_root: Path = Path(__file__).parent.parent
+    # Paths.
+    # __file__ is src/config/_main.py — climb three parents to reach the
+    # repo root. (Deployable copy has src/config.py so it only needed two;
+    # when this canonical tree turned config into a package, the path lost
+    # a level and started resolving project_root to src/ instead of the
+    # repo root, breaking the prompts_dir / architecture_dir / data_dir
+    # resolution. Restored here so scripts/run_batch.py can find prompts.)
+    project_root: Path = Path(__file__).parent.parent.parent
     prompts_dir: Path = project_root / "02_Prompts"
     architecture_dir: Path = project_root / "03_architecture"
     data_dir: Path = project_root / "data"

@@ -28,8 +28,12 @@ def test_time_limit_logic():
     print("-"*80)
     print(f"  Default time limit: {settings.supervisor_max_execution_seconds} seconds")
     print(f"  Default time limit: {settings.supervisor_max_execution_seconds / 3600} hours")
-    assert settings.supervisor_max_execution_seconds == 7200, "Default should be 7200 seconds (2 hours)"
-    print("  ✓ PASS: Default is 7200 seconds (2 hours)")
+    # B15 fix: code default is now 21600s (6h), reconciled with the 7h
+    # ECS watchdog cap. The previous 7200/2h was raised so the tournament
+    # can actually cover a 40-55 hypothesis pool. Keep config + test + docs
+    # in lockstep going forward.
+    assert settings.supervisor_max_execution_seconds == 21600, "Default should be 21600 seconds (6 hours)"
+    print("  ✓ PASS: Default is 21600 seconds (6 hours)")
 
     # Test 2: Time limit calculation
     print("\n" + "-"*80)
@@ -119,7 +123,7 @@ def test_time_limit_logic():
     print("✓ All AGENT-C1 unit tests passed!")
     print("="*80)
     print("\nImplementation Summary:")
-    print("  1. Configuration: settings.supervisor_max_execution_seconds = 7200s (2h)")
+    print("  1. Configuration: settings.supervisor_max_execution_seconds = 21600s (6h)")
     print("  2. Parameter: max_execution_time_seconds added to execute()")
     print("  3. Tracking: started_at = datetime.now() at workflow start")
     print("  4. Check: elapsed_seconds > max_execution_time_seconds")

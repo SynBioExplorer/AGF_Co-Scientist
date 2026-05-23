@@ -131,7 +131,10 @@ def prepare_data(run_json_path: Path) -> dict:
             "losses": len(mats) - wins,
         })
 
-    hyp_cards.sort(key=lambda x: x["elo"], reverse=True)
+    # B4 fix: demote unreviewed hypotheses to the bottom of the leaderboard,
+    # then sort by Elo desc within each group. Unreviewed cards (len==0) sort
+    # AFTER reviewed cards (len>0) because False < True in Python.
+    hyp_cards.sort(key=lambda x: (len(x["reviews"]) == 0, -x["elo"]))
 
     return {
         "goal": goal,

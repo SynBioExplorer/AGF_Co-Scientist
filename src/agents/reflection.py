@@ -418,7 +418,13 @@ Return ONLY valid JSON:
         if review_type == ReviewType.DEEP_VERIFICATION:
             return await self._deep_verification_review(hypothesis)
 
-        # Format prompt based on review type
+        # B8: collected per FULL review path below; empty for other types.
+        literature_searched_queries: List[str] = []
+
+        # B6 fix: explicit dispatch per review type. The previous catch-all
+        # ``else`` silently degraded SIMULATION (and any future ReviewType
+        # enum addition) to an initial-review prompt; we now route SIMULATION
+        # through its own prompt and raise on unknown types.
         if review_type == ReviewType.OBSERVATION:
             prompt = prompt_manager.format_reflection_prompt(
                 goal=hypothesis.hypothesis_statement,
@@ -429,9 +435,28 @@ Return ONLY valid JSON:
             # Paper Section 3.3.2: Full review leverages literature search
             # and applies a stricter scoring rubric than initial review.
             prompt = self._create_full_review_prompt(hypothesis)
-        else:
-            # For initial review, just evaluate the hypothesis directly
+            # B8 fix: derive 2-3 search queries for the FULL review and
+            # record them on Review.literature_searched. Previously the
+            # field was empty on 100% of reviews despite the CLAUDE.md
+            # description of FULL review performing "citation verification".
+            # Queries are stored even if the actual search is skipped — the
+            # field then documents which queries WOULD be useful to verify.
+            title_q = (hypothesis.title or "").strip()[:80]
+            statement_q = (hypothesis.hypothesis_statement or "").strip()[:80]
+            mechanism_q = (hypothesis.mechanism or "").strip()[:80]
+            literature_searched_queries = [
+                q for q in (title_q, statement_q, mechanism_q) if q
+            ][: settings.full_review_max_queries]
+        elif review_type == ReviewType.SIMULATION:
+            prompt = self._create_simulation_review_prompt(hypothesis)
+        elif review_type == ReviewType.INITIAL:
             prompt = self._create_initial_review_prompt(hypothesis)
+        else:
+            # B6 safety: never silently downgrade an unknown review type.
+            raise CoScientistError(
+                f"ReflectionAgent received unknown review_type={review_type}; "
+                f"add an explicit branch in execute() before scheduling it."
+            )
 
         # Add refutation context if available
         if refutation_context:
@@ -545,7 +570,14 @@ Respond with ONLY the JSON object, no additional text."""
                 critiques=data.get("critiques", []),
                 known_aspects=data.get("known_aspects", []),
                 novel_aspects=data.get("novel_aspects", []),
-                explained_observations=data.get("explained_observations", [])
+                explained_observations=data.get("explained_observations", []),
+                # B6 fix: populate the simulation-specific schema fields when
+                # present (only the SIMULATION prompt asks for them).
+                simulation_steps=data.get("simulation_steps", []),
+                potential_failures=data.get("potential_failures", []),
+                # B8 fix: record the search queries derived for this review
+                # (FULL reviews only; empty list for other review types).
+                literature_searched=literature_searched_queries,
             )
 
             self.logger.info(
@@ -570,6 +602,51 @@ Statement: {hypothesis.hypothesis_statement}
 Rationale: {hypothesis.rationale}
 Mechanism: {hypothesis.mechanism or 'Not specified'}
         """.strip()
+
+    def _create_simulation_review_prompt(self, hypothesis: Hypothesis) -> str:
+        """B6 fix: create a SIMULATION review prompt (Google paper Section 3.3.2).
+
+        The reviewer mentally simulates the proposed mechanism step by step,
+        surfacing failure points and assumptions. The response populates
+        ``Review.simulation_steps`` and ``Review.potential_failures`` so
+        downstream Meta-review / Evolution can act on concrete failure modes
+        rather than the diffuse output of an initial review.
+        """
+        return f"""You are an expert scientific reviewer conducting a SIMULATION review.
+Walk through the proposed mechanism of this hypothesis step by step, as if you
+were the cell / system / experimental apparatus executing it.
+
+Hypothesis to simulate:
+{self._format_hypothesis(hypothesis)}
+
+For EACH step in the mechanism, identify:
+- What is supposed to happen at this step.
+- What assumption(s) must hold for it to happen.
+- What could realistically fail at this step (kinetics, toxicity, off-target
+  effects, expression level, regulatory feedback, environmental conditions).
+
+Respond as JSON with this schema:
+{{
+    "passed": true | false,
+    "rationale": "Concise judgement after stepping through the mechanism.",
+    "correctness_score": 0.0-1.0,
+    "simulation_steps": [
+        "Step 1: <what happens>. Assumes: <assumption>.",
+        "Step 2: <what happens>. Assumes: <assumption>.",
+        "Step 3: ..."
+    ],
+    "potential_failures": [
+        "<concrete failure mode at step N, with why it might occur>",
+        "..."
+    ],
+    "weaknesses": ["..."],
+    "suggestions": ["..."]
+}}
+
+Mark ``passed: false`` if the simulation reveals at least one fundamental
+failure mode the experimental_protocol does not already mitigate. Respond
+with ONLY the JSON object, no additional text.
+"""
 
     def _create_initial_review_prompt(self, hypothesis: Hypothesis) -> str:
         """Create prompt for initial review without external tools"""

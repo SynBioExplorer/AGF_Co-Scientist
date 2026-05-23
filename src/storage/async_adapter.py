@@ -172,13 +172,24 @@ class AsyncStorageAdapter:
     async def get_top_hypotheses(
         self,
         n: int = 10,
-        goal_id: Optional[str] = None
+        goal_id: Optional[str] = None,
+        require_reviews: bool = False,
     ) -> List[Hypothesis]:
-        """Get top N hypotheses by Elo rating."""
+        """Get top N hypotheses by Elo rating.
+
+        B4 fix: with ``require_reviews=True``, restricts the result to
+        hypotheses that have at least one Review row — prevents unreviewed
+        Elo-1200 newcomers (e.g. freshly evolved hypotheses, post-B2) from
+        leaking into the leaderboard / research overview.
+        """
         if goal_id:
             hypotheses = await self.get_hypotheses_by_goal(goal_id)
         else:
             hypotheses = await self.get_all_hypotheses()
+        if require_reviews:
+            reviews = await self.get_all_reviews(goal_id=goal_id)
+            reviewed_ids = {r.hypothesis_id for r in reviews}
+            hypotheses = [h for h in hypotheses if h.id in reviewed_ids]
         return hypotheses[:n]
 
     async def get_hypotheses_needing_review(

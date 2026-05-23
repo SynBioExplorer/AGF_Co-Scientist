@@ -490,15 +490,26 @@ class PostgreSQLStorage(BaseStorage):
     async def get_top_hypotheses(
         self,
         n: int = 10,
-        goal_id: Optional[str] = None
+        goal_id: Optional[str] = None,
+        require_reviews: bool = False,
     ) -> List[Hypothesis]:
-        """Get top N hypotheses by Elo rating."""
+        """Get top N hypotheses by Elo rating.
+
+        B4 fix: with ``require_reviews=True``, restricts to hypotheses that
+        have at least one Review row, keeping unreviewed Elo-1200 newcomers
+        out of the leaderboard. The fragment is hard-coded (no user input)
+        so f-string substitution is safe.
+        """
+        review_filter = (
+            "AND EXISTS (SELECT 1 FROM reviews r WHERE r.hypothesis_id = hypotheses.id)"
+            if require_reviews else ""
+        )
         async with self._acquire_connection() as conn:
             if goal_id:
                 rows = await conn.fetch(
-                    """
+                    f"""
                     SELECT * FROM hypotheses
-                    WHERE research_goal_id = $1
+                    WHERE research_goal_id = $1 {review_filter}
                     ORDER BY elo_rating DESC
                     LIMIT $2
                     """,
@@ -507,7 +518,8 @@ class PostgreSQLStorage(BaseStorage):
                 )
             else:
                 rows = await conn.fetch(
-                    "SELECT * FROM hypotheses ORDER BY elo_rating DESC LIMIT $1",
+                    f"SELECT * FROM hypotheses WHERE 1=1 {review_filter} "
+                    "ORDER BY elo_rating DESC LIMIT $1",
                     n,
                 )
             return [self._row_to_hypothesis(row) for row in rows]

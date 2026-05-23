@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -749,6 +749,13 @@ class ContextMemory(BaseModel):
     explored_directions: list[str] = Field(
         default_factory=list,
         description="Hypothesis titles already explored (to avoid repetition)"
+    )
+
+    # B14 fix: persist the cost tracker summary into the run JSON so per-run
+    # spend can be audited after the fact. Optional with default None so old
+    # checkpoints deserialize without migration.
+    cost_summary: Optional[Dict[str, Any]] = Field(
+        None, description="CostTracker.get_summary() output at run finalization"
     )
 
     created_at: datetime = Field(default_factory=datetime.now)

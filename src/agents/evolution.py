@@ -35,7 +35,8 @@ class EvolutionAgent(BaseAgent):
         reviews: Optional[list[Review]] = None,
         similar_hypotheses: Optional[list[Hypothesis]] = None,
         context_guidance: str = "",
-        research_goal_description: str = ""
+        research_goal_description: str = "",
+        existing_titles: Optional[set] = None,
     ) -> Hypothesis:
         """Evolve a hypothesis using specified strategy
 
@@ -119,7 +120,9 @@ Respond with ONLY the JSON object, no additional text."""
         for attempt in range(max_attempts):
             response = self.llm_client.invoke(structured_prompt)
             try:
-                response = self._parse_evolution_response(response, hypothesis, strategy)
+                response = self._parse_evolution_response(
+                    response, hypothesis, strategy, existing_titles=existing_titles
+                )
                 return response
             except CoScientistError as e:
                 last_error = e
@@ -132,7 +135,13 @@ Respond with ONLY the JSON object, no additional text."""
                     continue
                 raise last_error
 
-    def _parse_evolution_response(self, response: str, hypothesis, strategy) -> "Hypothesis":
+    def _parse_evolution_response(
+        self,
+        response: str,
+        hypothesis,
+        strategy,
+        existing_titles: Optional[set] = None,
+    ) -> "Hypothesis":
         """Parse evolution LLM response into a Hypothesis, raising on failure."""
         try:
             # Extract JSON from response
@@ -166,10 +175,25 @@ Respond with ONLY the JSON object, no additional text."""
             proto.setdefault("expected_outcomes", [])
             proto.setdefault("success_criteria", "")
 
+            # B9 fix: avoid silent title collisions. If the LLM omitted the
+            # title, returned the parent's verbatim, or returned something
+            # already present in the pool, synthesize a distinct title.
+            raw_title = data.get("title")
+            existing = existing_titles or set()
+            if not raw_title or raw_title == hypothesis.title or raw_title in existing:
+                base = f"{hypothesis.title} [evolved: {strategy.value}]"
+                title = base
+                suffix = 2
+                while title in existing:
+                    title = f"{base} #{suffix}"
+                    suffix += 1
+            else:
+                title = raw_title
+
             evolved_hypothesis = Hypothesis(
                 id=generate_hypothesis_id(),
                 research_goal_id=hypothesis.research_goal_id,
-                title=data.get("title", hypothesis.title),
+                title=title,
                 summary=data.get("summary", data.get("statement", "")[:200]),
                 hypothesis_statement=data.get("statement", hypothesis.hypothesis_statement),
                 rationale=data.get("rationale", hypothesis.rationale),
@@ -181,7 +205,11 @@ Respond with ONLY the JSON object, no additional text."""
                 ],
                 generation_method=hypothesis.generation_method,
                 parent_hypothesis_ids=[hypothesis.id],  # Track evolution lineage
-                elo_rating=hypothesis.elo_rating  # Inherit parent's Elo
+                # B1 fix: do NOT inherit parent's Elo. Each evolved hypothesis
+                # must enter the tournament at the schema default (1200.0) and
+                # earn its rating from match outcomes, matching the Google paper
+                # ("each new hypothesis must also compete in the tournament").
+                # Schema default is at 03_architecture/schemas.py:210-212.
             )
 
             self.logger.info(

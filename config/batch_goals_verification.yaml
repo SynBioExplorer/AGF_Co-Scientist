@@ -1,0 +1,17 @@
+# Minimal verification config for the Tier 1+2+3 bug-fix campaign.
+# Used by scripts/run_batch.py with low max_iterations and tight budget so
+# the run JSON exercises every fix in <10 minutes for <$5 of LLM spend.
+budget_aud: 15.0  # ~$10 USD ceiling
+max_iterations: 3  # Tight loop — enough to fire generation, ranking, evolution
+
+laboratory_context: |
+  Australian Genome Foundry (Macquarie University) — high-throughput
+  yeast/E. coli/V. natriegens facility with Echo 525, Opentrons OT-2,
+  Sartorius ambr 250, BioLector XT, FACS, and Nanopore MinION available.
+
+goals:
+  - description: >
+      Identify one simple yeast biosensor design that could be built
+      with standard parts to detect a small-molecule analyte.
+    constraints: []
+    preferences: []

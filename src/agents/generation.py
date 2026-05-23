@@ -8,7 +8,7 @@ import json
 import re
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent / "03_architecture"))
-from schemas import Hypothesis, ResearchGoal, Citation, ExperimentalProtocol, GenerationMethod
+from schemas import Hypothesis, ResearchGoal, Citation, ExperimentalProtocol, GenerationMethod, Assumption
 
 from src.agents.base import BaseAgent
 from src.llm.factory import get_llm_client
@@ -1083,66 +1083,132 @@ IMPORTANT: Return your response as valid JSON matching this schema:
     }},
     "citations": [
         {{"title": "Paper title", "doi": "10.xxxx/xxxxx", "relevance": "Why this paper is relevant"}}
+    ],
+    "assumptions": [
+        {{"statement": "Key biological/physical assumption this hypothesis depends on", "is_fundamental": true}},
+        {{"statement": "Methodological assumption (e.g., assay sensitivity sufficient)", "is_fundamental": false}}
     ]
 }}
 
-Respond with ONLY the JSON object, no additional text."""
+CRITICAL: The `assumptions` array is REQUIRED, not optional. You MUST include
+exactly 3-5 entries enumerating the key biological, physical, methodological,
+and contextual assumptions the hypothesis depends on. Each entry MUST be a JSON
+object with both ``statement`` (string) and ``is_fundamental`` (boolean — true
+if its failure would invalidate the hypothesis outright, false for
+methodological / convenience assumptions). Hypotheses that omit assumptions
+cannot be deep-verified by downstream reviewers and will be flagged as
+incomplete.
 
-        # Invoke LLM
-        response = self.llm_client.invoke(structured_prompt)
+Respond with ONLY the JSON object, no additional text. Do not include any
+field outside the schema above. Do not omit any field shown in the schema."""
 
-        # Parse response
-        try:
-            data = parse_llm_json(response, agent_name="GenerationAgent")
+        # B10 fix: wrap LLM invoke + parse in a bounded retry loop mirroring
+        # evolution.py:114-133. JSON-decode failures retry once; schema
+        # validation / missing-key failures do not (the prompt is bad, not
+        # the response). All branches emit structured logs with a short
+        # response preview so generation failure modes become diagnosable.
+        max_attempts = 2
+        response = None
+        for attempt in range(max_attempts):
+            response = self.llm_client.invoke(structured_prompt)
+            try:
+                data = parse_llm_json(response, agent_name="GenerationAgent")
 
-            # Build Hypothesis object
-            hypothesis = Hypothesis(
-                id=generate_hypothesis_id(),
-                research_goal_id=research_goal.id,
-                title=data["title"],
-                summary=data["title"],  # Use title as summary for now
-                hypothesis_statement=data["statement"],
-                rationale=data["rationale"],
-                mechanism=data.get("mechanism"),
-                experimental_protocol=ExperimentalProtocol(
-                    **{
-                        **{"objective": "", "methodology": "", "controls": [],
-                           "expected_outcomes": [], "success_criteria": ""},
+                # Build Hypothesis object
+                hypothesis = Hypothesis(
+                    id=generate_hypothesis_id(),
+                    research_goal_id=research_goal.id,
+                    title=data["title"],
+                    summary=data["title"],  # Use title as summary for now
+                    hypothesis_statement=data["statement"],
+                    rationale=data["rationale"],
+                    mechanism=data.get("mechanism"),
+                    experimental_protocol=ExperimentalProtocol(
                         **{
-                            k: (
-                                # List fields: wrap string as list
-                                [v] if isinstance(v, str) and k in ("controls", "expected_outcomes")
-                                # String fields: join list as string
-                                else "\n".join(str(x) for x in v) if isinstance(v, list) and k in ("objective", "methodology", "success_criteria")
-                                else v
-                            )
-                            for k, v in data.get("experimental_protocol", {}).items()
+                            **{"objective": "", "methodology": "", "controls": [],
+                               "expected_outcomes": [], "success_criteria": ""},
+                            **{
+                                k: (
+                                    # List fields: wrap string as list
+                                    [v] if isinstance(v, str) and k in ("controls", "expected_outcomes")
+                                    # String fields: join list as string
+                                    else "\n".join(str(x) for x in v) if isinstance(v, list) and k in ("objective", "methodology", "success_criteria")
+                                    else v
+                                )
+                                for k, v in data.get("experimental_protocol", {}).items()
+                            }
                         }
-                    }
-                ),
-                literature_citations=[
-                    Citation(**c) for c in data.get("citations", [])
-                    if isinstance(c, dict) and c.get("title")
-                ],
-                generation_method=method,
-                elo_rating=1200.0  # Initial Elo per Google paper (page 11)
-            )
+                    ),
+                    literature_citations=[
+                        Citation(**c) for c in data.get("citations", [])
+                        if isinstance(c, dict) and c.get("title")
+                    ],
+                    # B7 fix: populate assumptions[] from the LLM response. Each
+                    # gets a synthesized id (Assumption.id is required). Defaults
+                    # is_fundamental=True per schema (schemas.py:230-232) if the
+                    # model omits the flag.
+                    assumptions=[
+                        Assumption(
+                            id=f"asm_{i}",
+                            statement=a["statement"],
+                            is_fundamental=bool(a.get("is_fundamental", True)),
+                        )
+                        for i, a in enumerate(data.get("assumptions", []))
+                        if isinstance(a, dict) and a.get("statement")
+                    ],
+                    generation_method=method,
+                    elo_rating=1200.0  # Initial Elo per Google paper (page 11)
+                )
 
-            # Validate and enrich citations if literature expansion was used
-            if use_literature_expansion:
-                hypothesis = await self._validate_citations(hypothesis, citation_graph)
+                # Validate and enrich citations if literature expansion was used
+                if use_literature_expansion:
+                    hypothesis = await self._validate_citations(hypothesis, citation_graph)
 
-            self.logger.info(
-                "Hypothesis generated",
-                hypothesis_id=hypothesis.id,
-                title=hypothesis.title,
-                num_citations=len(hypothesis.literature_citations)
-            )
+                self.logger.info(
+                    "Hypothesis generated",
+                    hypothesis_id=hypothesis.id,
+                    title=hypothesis.title,
+                    num_citations=len(hypothesis.literature_citations)
+                )
 
-            return hypothesis
+                return hypothesis
 
-        except (json.JSONDecodeError, PydanticValidationError, KeyError) as e:
-            raise CoScientistError(f"Failed to parse LLM response: {e}\nResponse: {response[:500]}")
+            except json.JSONDecodeError as e:
+                self.logger.warning(
+                    "generation_json_parse_failed",
+                    attempt=attempt + 1,
+                    max_attempts=max_attempts,
+                    error=str(e)[:200],
+                    response_preview=(response or "")[:500],
+                )
+                if attempt < max_attempts - 1:
+                    continue
+                raise CoScientistError(
+                    f"Failed to parse LLM response after {max_attempts} attempts: {e}\n"
+                    f"Response: {(response or '')[:500]}"
+                )
+            except PydanticValidationError as e:
+                # Schema validation failures don't benefit from retry — the
+                # response shape is wrong, retrying yields the same shape.
+                self.logger.warning(
+                    "generation_schema_validation_failed",
+                    attempt=attempt + 1,
+                    error=str(e)[:200],
+                    response_preview=(response or "")[:500],
+                )
+                raise CoScientistError(
+                    f"Schema validation failed: {e}\nResponse: {(response or '')[:500]}"
+                )
+            except KeyError as e:
+                self.logger.warning(
+                    "generation_keyerror",
+                    attempt=attempt + 1,
+                    missing_key=str(e),
+                    response_preview=(response or "")[:500],
+                )
+                raise CoScientistError(
+                    f"Missing required key {e}\nResponse: {(response or '')[:500]}"
+                )
 
     async def _validate_citations(
         self,

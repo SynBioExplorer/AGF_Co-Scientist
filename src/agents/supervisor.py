@@ -132,10 +132,15 @@ class SupervisorAgent(BaseAgent):
         Returns:
             Dictionary mapping agent type to weight.
         """
+        # B16 rebalance: shift compute from generation to ranking. Old runs
+        # produced 40-55 hypotheses but only 21-29 matches (55-62% never
+        # reviewed). New mix favours coverage. The pool-size cap in the
+        # GENERATION branch of _create_task_for_agent backs this up as a
+        # self-regulating hard limit.
         return {
-            AgentType.GENERATION: 0.25,          # 25% - create hypotheses
+            AgentType.GENERATION: 0.15,          # 15% - create hypotheses (was 0.25)
             AgentType.REFLECTION: 0.25,          # 25% - INITIAL + FULL + DEEP_VERIFICATION reviews
-            AgentType.RANKING: 0.20,             # 20% - tournament matches
+            AgentType.RANKING: 0.30,             # 30% - tournament matches (was 0.20)
             AgentType.EVOLUTION: 0.13,           # 13% - refine top hypotheses
             AgentType.OBSERVATION_REVIEW: 0.08,  # 8% - validate against literature
             AgentType.PROXIMITY: 0.05,           # 5% - cluster similar hypotheses
@@ -250,7 +255,7 @@ class SupervisorAgent(BaseAgent):
             quality_threshold: Average quality score threshold.
             convergence_threshold: Elo convergence threshold.
             max_execution_time_seconds: Maximum total execution time in seconds.
-                Defaults to settings.supervisor_max_execution_seconds (7200 = 2 hours).
+                Defaults to settings.supervisor_max_execution_seconds (21600 = 6 hours).
 
         Returns:
             Status message with summary of execution.
@@ -290,6 +295,12 @@ class SupervisorAgent(BaseAgent):
         if max_execution_time_seconds is None:
             max_execution_time_seconds = settings.supervisor_max_execution_seconds
 
+        # B3 fix: expose timing on self so _execute_iteration can compute the
+        # drain-phase threshold without changing its signature.
+        self._workflow_started_at = started_at
+        self._max_execution_time_seconds = max_execution_time_seconds
+        self._drain_iterations = 0
+
         logger.info(
             "supervisor_time_limit_set",
             max_execution_time_seconds=max_execution_time_seconds,
@@ -314,7 +325,11 @@ class SupervisorAgent(BaseAgent):
                 break
 
             # Compute statistics
-            stats = await self.statistics.compute_statistics(research_goal.id)
+            # B13 fix: pass live agent_weights so system_statistics reports
+            # what's actually used for task allocation (not a stale default).
+            stats = await self.statistics.compute_statistics(
+                research_goal.id, agent_weights=self.agent_weights
+            )
 
             # Check terminal conditions (including time limit)
             should_stop, reason = await self._check_terminal_conditions(
@@ -362,6 +377,29 @@ class SupervisorAgent(BaseAgent):
 
         # Print cost summary
         self.cost_tracker.print_summary()
+
+        # B11+B12+B14 fix: final checkpoint with up-to-date stats, iteration
+        # count and persisted cost summary. The per-iteration save at line
+        # 349 runs BEFORE the iteration's work, so without this final save
+        # the run JSON misses (B11) the last iteration's hypotheses/matches,
+        # (B12) on the terminal-break path the iteration_count is off by one
+        # versus the result string, and (B14) the cost data is never persisted.
+        # Wrapped so a save failure here cannot mask the run's actual result.
+        try:
+            final_stats = await self.statistics.compute_statistics(
+                research_goal.id, agent_weights=self.agent_weights
+            )
+            cost_summary = self.cost_tracker.get_summary()
+            await self._save_checkpoint(
+                research_goal.id, final_stats, cost_summary=cost_summary
+            )
+        except Exception as e:
+            logger.warning(
+                "final_checkpoint_save_failed",
+                goal_id=research_goal.id,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
 
         return (
             f"Supervisor completed after {self.iteration} iterations. "
@@ -536,29 +574,62 @@ Respond with ONLY the JSON object."""
         Args:
             research_goal: Current research goal.
         """
-        # Refresh proximity graph periodically
-        if (settings.proximity_aware_pairing and
-            self.iteration % settings.proximity_graph_refresh_frequency == 0):
-            hypotheses = await self.storage.get_hypotheses_by_goal(research_goal.id)
-            if len(hypotheses) >= 2:
-                self.task_queue.add_task(AgentTask(
-                    id=generate_task_id(),
-                    agent_type=AgentType.PROXIMITY,
-                    task_type="build_proximity_graph",
-                    priority=8,
-                    parameters={
-                        "goal_id": research_goal.id,
-                        "hypothesis_ids": [h.id for h in hypotheses],
-                    },
-                    status="pending"
-                ))
+        # B3 drain-phase gate: once elapsed crosses drain_phase_start_fraction
+        # of the time budget, stop scheduling GENERATION/EVOLUTION/etc. and
+        # only schedule RANKING so the unmatched-hypothesis guard at
+        # _check_terminal_conditions becomes satisfiable. Capped at
+        # drain_max_iterations to prevent a pathological pool from stalling.
+        elapsed = (datetime.now() - self._workflow_started_at).total_seconds()
+        drain_threshold = (
+            settings.drain_phase_start_fraction * self._max_execution_time_seconds
+        )
+        in_drain = elapsed > drain_threshold
 
-        execution_phases = [
-            [AgentType.GENERATION, AgentType.PROXIMITY],
-            [AgentType.REFLECTION, AgentType.OBSERVATION_REVIEW],
-            [AgentType.RANKING, AgentType.EVOLUTION],
-            [AgentType.META_REVIEW],
-        ]
+        if in_drain:
+            self._drain_iterations += 1
+            if self._drain_iterations > settings.drain_max_iterations:
+                logger.warning(
+                    "drain_cap_hit_skipping_iteration",
+                    iteration=self.iteration,
+                    drain_iteration=self._drain_iterations,
+                    drain_max=settings.drain_max_iterations,
+                    elapsed_seconds=int(elapsed),
+                )
+                # Skip scheduling; outer loop will either terminate via the
+                # unmatched guard (best case) or hit max_iterations.
+                return
+            logger.info(
+                "drain_phase_active",
+                iteration=self.iteration,
+                drain_iteration=self._drain_iterations,
+                elapsed_seconds=int(elapsed),
+                threshold_seconds=int(drain_threshold),
+            )
+            execution_phases = [[AgentType.RANKING]]
+        else:
+            # Refresh proximity graph periodically (only outside drain).
+            if (settings.proximity_aware_pairing and
+                self.iteration % settings.proximity_graph_refresh_frequency == 0):
+                hypotheses = await self.storage.get_hypotheses_by_goal(research_goal.id)
+                if len(hypotheses) >= 2:
+                    self.task_queue.add_task(AgentTask(
+                        id=generate_task_id(),
+                        agent_type=AgentType.PROXIMITY,
+                        task_type="build_proximity_graph",
+                        priority=8,
+                        parameters={
+                            "goal_id": research_goal.id,
+                            "hypothesis_ids": [h.id for h in hypotheses],
+                        },
+                        status="pending"
+                    ))
+
+            execution_phases = [
+                [AgentType.GENERATION, AgentType.PROXIMITY],
+                [AgentType.REFLECTION, AgentType.OBSERVATION_REVIEW],
+                [AgentType.RANKING, AgentType.EVOLUTION],
+                [AgentType.META_REVIEW],
+            ]
 
         tasks_per_iteration = 12
         executed_count = 0
@@ -567,11 +638,15 @@ Respond with ONLY the JSON object."""
             phase_tasks: list[AgentTask] = []
 
             for agent_type in phase_agents:
-                weight = self.agent_weights.get(agent_type, 0)
-                if weight <= 0:
-                    continue
-
-                num_tasks = max(1, int(weight * tasks_per_iteration))
+                # B3 drain: give all task slots to RANKING to drain unmatched
+                # hypotheses quickly. Outside drain, use weighted allocation.
+                if in_drain:
+                    num_tasks = tasks_per_iteration
+                else:
+                    weight = self.agent_weights.get(agent_type, 0)
+                    if weight <= 0:
+                        continue
+                    num_tasks = max(1, int(weight * tasks_per_iteration))
                 for _ in range(num_tasks):
                     task = self.task_queue.get_next_task(agent_type)
                     if not task:
@@ -707,6 +782,18 @@ Respond with ONLY the JSON object."""
         goal_id = research_goal.id
 
         if agent_type == AgentType.GENERATION:
+            # B16 pool-size cap: once the hypothesis pool reaches
+            # settings.generation_pool_cap, stop scheduling new generation so
+            # ranking can catch up. Self-regulating regardless of weights.
+            current_pool = await self.storage.get_hypotheses_by_goal(goal_id)
+            if len(current_pool) >= settings.generation_pool_cap:
+                logger.info(
+                    "generation_paused_pool_cap",
+                    pool_size=len(current_pool),
+                    cap=settings.generation_pool_cap,
+                )
+                return None
+
             # Paper Section 3.3.1 lists 4 generation methods; we rotate 3 of them
             # for diversity. RESEARCH_EXPANSION falls back to LITERATURE if no
             # research overview is available yet (early iterations).
@@ -750,33 +837,78 @@ Respond with ONLY the JSON object."""
                     status="pending"
                 )
 
-            # No initial reviews needed - schedule deep verification for top hypotheses
-            top_hyps = await self.storage.get_top_hypotheses(n=3, goal_id=goal_id)
+            # B5 fix: schedule deep verification for top hypotheses with a
+            # passing FULL review and no existing DEEP_VERIFICATION review.
+            # Previously gated on ``hyp.status == FULL_REVIEW`` only, but the
+            # full-review result handler advances status to IN_TOURNAMENT
+            # before the next supervisor pass, so the gate was never
+            # satisfied and DEEP_VERIFICATION never fired. We now check the
+            # reviews directly (status-independent).
+            top_hyps = await self.storage.get_top_hypotheses(
+                n=3, goal_id=goal_id, require_reviews=True
+            )
             for hyp in top_hyps:
-                if hyp.status == HypothesisStatus.FULL_REVIEW:
-                    reviews = await self.storage.get_reviews_for_hypothesis(hyp.id)
-                    has_deep = any(r.review_type == ReviewType.DEEP_VERIFICATION for r in reviews)
-                    if not has_deep:
-                        return AgentTask(
-                            id=generate_task_id(),
-                            agent_type=AgentType.REFLECTION,
-                            task_type="deep_verification_review",
-                            priority=8,
-                            parameters={
-                                "hypothesis_id": hyp.id,
-                                "review_type": ReviewType.DEEP_VERIFICATION.value,
-                            },
-                            status="pending"
-                        )
+                reviews = await self.storage.get_reviews_for_hypothesis(hyp.id)
+                has_passing_full = any(
+                    r.review_type == ReviewType.FULL and r.passed for r in reviews
+                )
+                has_deep = any(
+                    r.review_type == ReviewType.DEEP_VERIFICATION for r in reviews
+                )
+                if has_passing_full and not has_deep:
+                    return AgentTask(
+                        id=generate_task_id(),
+                        agent_type=AgentType.REFLECTION,
+                        task_type="deep_verification_review",
+                        priority=8,
+                        parameters={
+                            "hypothesis_id": hyp.id,
+                            "review_type": ReviewType.DEEP_VERIFICATION.value,
+                        },
+                        status="pending"
+                    )
+
+            # B6 fix: schedule SIMULATION reviews for top hypotheses that
+            # have a passing FULL review and no existing SIMULATION review.
+            # Without scheduling here, the SIMULATION dispatch branch in
+            # reflection.py is dead code.
+            for hyp in top_hyps:
+                reviews = await self.storage.get_reviews_for_hypothesis(hyp.id)
+                has_passing_full = any(
+                    r.review_type == ReviewType.FULL and r.passed for r in reviews
+                )
+                has_sim = any(
+                    r.review_type == ReviewType.SIMULATION for r in reviews
+                )
+                if has_passing_full and not has_sim:
+                    return AgentTask(
+                        id=generate_task_id(),
+                        agent_type=AgentType.REFLECTION,
+                        task_type="simulation_review",
+                        priority=7,
+                        parameters={
+                            "hypothesis_id": hyp.id,
+                            "review_type": ReviewType.SIMULATION.value,
+                        },
+                        status="pending"
+                    )
 
         elif agent_type == AgentType.RANKING:
-            # Find hypotheses for tournament. A hypothesis is eligible only
-            # once an actual Review row exists for it — prevents unreviewed
-            # defaults (Elo=1200) from appearing in top-N rankings.
+            # Find hypotheses for tournament. A hypothesis is eligible if it
+            # has a Review row OR is an evolved child (non-empty
+            # parent_hypothesis_ids). B2 fix: evolved hypotheses always carry
+            # lineage and, with B1 (no Elo inheritance), enter at the schema
+            # default 1200 like any newcomer. The original review-only filter
+            # silently excluded 0/17-20 evolved hypotheses per run from every
+            # match. The leaderboard-presentation safeguard against unreviewed
+            # 1200 defaults is enforced separately (B4: require_reviews flag).
             hypotheses = await self.storage.get_hypotheses_by_goal(goal_id)
             all_reviews_for_goal = await self.storage.get_all_reviews(goal_id=goal_id)
             reviewed_ids = {r.hypothesis_id for r in all_reviews_for_goal}
-            reviewed = [h for h in hypotheses if h.id in reviewed_ids]
+            reviewed = [
+                h for h in hypotheses
+                if h.id in reviewed_ids or h.parent_hypothesis_ids
+            ]
             if len(reviewed) >= 2:
                 # Annotate each hypothesis with match count so the ranker
                 # can prioritize newcomers (paper: "newer hypotheses prioritized")
@@ -924,28 +1056,41 @@ Respond with ONLY the JSON object."""
                 )
 
         elif agent_type == AgentType.OBSERVATION_REVIEW:
-            # Schedule observation review for hypotheses that have passed initial
-            # review but don't yet have an observation review (Paper Section 3.3.2)
+            # B5 fix: queue up to OBSERVATION_BATCH_CAP eligible hypotheses
+            # per call (was: single early-return, so only 1 observation
+            # review per iteration regardless of pool size).
+            OBSERVATION_BATCH_CAP = 3
             eligible_statuses = {
                 HypothesisStatus.INITIAL_REVIEW,
                 HypothesisStatus.FULL_REVIEW,
                 HypothesisStatus.IN_TOURNAMENT,
             }
             hypotheses = await self.storage.get_hypotheses_by_goal(goal_id)
+            first_task: Optional[AgentTask] = None
+            queued = 0
             for h in hypotheses:
-                if h.status in eligible_statuses:
-                    existing = await self.storage.get_observation_review(h.id)
-                    if not existing:
-                        return AgentTask(
-                            id=generate_task_id(),
-                            agent_type=AgentType.OBSERVATION_REVIEW,
-                            task_type="observation_review",
-                            priority=5,
-                            parameters={
-                                "hypothesis_id": h.id,
-                            },
-                            status="pending"
-                        )
+                if h.status not in eligible_statuses:
+                    continue
+                existing = await self.storage.get_observation_review(h.id)
+                if existing:
+                    continue
+                task = AgentTask(
+                    id=generate_task_id(),
+                    agent_type=AgentType.OBSERVATION_REVIEW,
+                    task_type="observation_review",
+                    priority=5,
+                    parameters={"hypothesis_id": h.id},
+                    status="pending",
+                )
+                if first_task is None:
+                    first_task = task
+                else:
+                    self.task_queue.add_task(task)
+                queued += 1
+                if queued >= OBSERVATION_BATCH_CAP:
+                    break
+            if first_task is not None:
+                return first_task
 
         return None
 
@@ -1156,6 +1301,13 @@ Respond with ONLY the JSON object."""
                 strategy = EvolutionStrategy(params.get("strategy", "feasibility"))
                 # Get reviews for evolution context
                 reviews = await self.storage.get_reviews_for_hypothesis(hypothesis_id)
+                # B9 fix: pass existing titles so EvolutionAgent can avoid
+                # collisions (the LLM occasionally omits the title and the
+                # parser used to silently reuse the parent's title verbatim).
+                existing_hyps = await self.storage.get_hypotheses_by_goal(
+                    research_goal.id
+                )
+                existing_titles = {h.title for h in existing_hyps if h.title}
                 # Run sync agent in thread pool to avoid blocking event loop
                 evolved = await asyncio.to_thread(
                     agent.execute,
@@ -1163,7 +1315,8 @@ Respond with ONLY the JSON object."""
                     strategy=strategy,
                     reviews=reviews if reviews else None,
                     context_guidance=self._format_context_for_prompt(),
-                    research_goal_description=research_goal.description
+                    research_goal_description=research_goal.description,
+                    existing_titles=existing_titles,
                 )
 
                 # Safety review for evolved hypothesis (skip if threshold is 0)
@@ -1236,7 +1389,17 @@ Respond with ONLY the JSON object."""
             # Also generate research overview so expansion method has data
             # (without this, get_research_overview returns None during iterations)
             try:
-                top_hyps = await self.storage.get_top_hypotheses(n=5, goal_id=research_goal.id)
+                # B4: prefer reviewed hypotheses for the research overview so
+                # unreviewed Elo-1200 newcomers (esp. post-B1/B2 evolved
+                # children) don't dominate the top-5. Fall back to the full
+                # pool when fewer than 5 reviewed hyps exist (short runs).
+                top_hyps = await self.storage.get_top_hypotheses(
+                    n=5, goal_id=research_goal.id, require_reviews=True
+                )
+                if len(top_hyps) < 5:
+                    top_hyps = await self.storage.get_top_hypotheses(
+                        n=5, goal_id=research_goal.id
+                    )
                 if top_hyps:
                     overview = agent.generate_research_overview(
                         goal=research_goal.description,
@@ -1383,7 +1546,8 @@ Respond with ONLY the JSON object."""
     async def _save_checkpoint(
         self,
         goal_id: str,
-        stats: SystemStatistics
+        stats: SystemStatistics,
+        cost_summary: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Save a workflow checkpoint with retry logic.
 
@@ -1394,6 +1558,9 @@ Respond with ONLY the JSON object."""
         Args:
             goal_id: Research goal ID.
             stats: Current statistics.
+            cost_summary: Optional CostTracker.get_summary() output (B14 fix);
+                set on the final post-loop checkpoint so per-run spend lands
+                in the run JSON. Defaults to ``None`` for per-iteration saves.
 
         Raises:
             CheckpointError: If checkpoint save fails after retry.
@@ -1417,6 +1584,7 @@ Respond with ONLY the JSON object."""
             iteration_count=self.iteration,
             accumulated_insights=self._context_insights,
             explored_directions=self._explored_directions,
+            cost_summary=cost_summary,
         )
 
         # First attempt to save checkpoint

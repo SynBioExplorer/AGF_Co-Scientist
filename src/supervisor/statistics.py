@@ -58,7 +58,11 @@ class SupervisorStatistics:
         """
         self.storage = storage
 
-    async def compute_statistics(self, goal_id: str) -> SystemStatistics:
+    async def compute_statistics(
+        self,
+        goal_id: str,
+        agent_weights: Optional[Dict[str, float]] = None,
+    ) -> SystemStatistics:
         """Compute current system statistics for a research goal.
 
         This is the main entry point for statistics computation. It
@@ -66,6 +70,13 @@ class SupervisorStatistics:
 
         Args:
             goal_id: Research goal ID to compute stats for.
+            agent_weights: Live agent weights dict from the supervisor
+                (B13 fix). When provided, this is what lands in
+                ``SystemStatistics.agent_weights`` — so the run JSON
+                reflects what was actually used for task allocation,
+                not a stale hardcoded default that disagreed with
+                ``_initialize_weights`` (and missed OBSERVATION_REVIEW
+                entirely).
 
         Returns:
             SystemStatistics with all computed metrics.
@@ -96,16 +107,17 @@ class SupervisorStatistics:
         # Calculate method effectiveness
         method_effectiveness = self._calculate_method_effectiveness(hypotheses)
 
-        # Get current agent weights (will be set by supervisor)
-        # Default weights if not available
-        agent_weights = {
-            AgentType.GENERATION.value: 0.4,
-            AgentType.REFLECTION.value: 0.2,
-            AgentType.RANKING.value: 0.2,
-            AgentType.EVOLUTION.value: 0.1,
-            AgentType.PROXIMITY.value: 0.05,
-            AgentType.META_REVIEW.value: 0.05,
-        }
+        # B13 fix: report the supervisor's LIVE weights, not a hardcoded
+        # default dict that disagreed with _initialize_weights() and silently
+        # omitted OBSERVATION_REVIEW. If the caller doesn't supply weights
+        # (legacy paths / standalone use), fall back to an empty dict — the
+        # run JSON will then make the missing data explicit instead of lying.
+        report_weights: Dict[str, float] = {}
+        if agent_weights:
+            # Accept either {AgentType: float} (supervisor's live dict) or
+            # {str: float} (already-serialized form).
+            for k, v in agent_weights.items():
+                report_weights[getattr(k, "value", str(k))] = v
 
         stats = SystemStatistics(
             research_goal_id=goal_id,
@@ -118,7 +130,7 @@ class SupervisorStatistics:
             generation_success_rate=generation_success,
             evolution_improvement_rate=evolution_improvement,
             method_effectiveness=method_effectiveness,
-            agent_weights=agent_weights,
+            agent_weights=report_weights,
             computed_at=datetime.now(),
         )
 

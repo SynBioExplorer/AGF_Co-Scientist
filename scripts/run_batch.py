@@ -18,6 +18,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "03_architecture"))
+sys.path.insert(0, str(REPO_ROOT / "04_Scripts"))  # cost_tracker lives here
 
 # Load .env BEFORE importing src.* — LangSmith reads env at import time
 from dotenv import load_dotenv
