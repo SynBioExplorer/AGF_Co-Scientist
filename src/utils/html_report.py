@@ -1,38 +1,72 @@
-"""Generate a single self-contained bento-grid HTML report from a Co-Scientist run JSON.
+"""Generate a self-contained interactive HTML report from a Co-Scientist run JSON.
 
-The report is a light asymmetric bento grid with the AGF brand logo embedded inline.
-No external file dependencies beyond Plotly and Google Fonts CDNs.
+The report is styled as a light asymmetric **bento grid** with the Australian
+Genome Foundry brand identity: AGF logo (top-left, base64-inlined), AGF teal
+``#05A5B0`` / green ``#B9D432`` / navy ``#101B34`` / peach ``#EE5F69`` accent
+palette, and Raleway + JetBrains Mono typography.
+
+Output is a single HTML file (~1 MB) carrying its own CSS, JavaScript, and
+data, plus the AGF logo as a ``data:image/png;base64,...`` URI. Plotly + Google
+Fonts come from CDNs.
+
+Public API
+----------
+``generate_html_report(run_json_path, output_path=None) -> str``
+    Read the run JSON, write the HTML file, return the output path.
+    Signature preserved for callers in ``scripts/run_batch.py`` and
+    ``src/api/export.py``.
+
+Logo discovery
+--------------
+The logo is loaded from the first path that exists:
+
+    1. ``src/utils/assets/AusGenome_LOGO_MAIN.png`` (bundled location — drop the
+       PNG here)
+    2. ``<repo_root>/AusGenome_LOGO_MAIN.png`` (legacy convenience)
+
+If neither exists or Pillow is not installed, the brand row degrades
+gracefully to a text-only label (no broken image icon).
 """
+
 from __future__ import annotations
 
 import base64
 import io
 import json
-import sys
 from collections import Counter
 from html import escape
 from pathlib import Path
+from typing import Optional
 
 
-# Repo-relative default logo location (Google co-scientist/assets/AusGenome_LOGO_MAIN.png).
-# Falls back gracefully to empty string if missing or Pillow unavailable.
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_LOGO_PATH = _PROJECT_ROOT / "assets" / "AusGenome_LOGO_MAIN.png"
+_MODULE_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _MODULE_DIR.parent.parent
+_LOGO_SEARCH_PATHS = (
+    _MODULE_DIR / "assets" / "AusGenome_LOGO_MAIN.png",
+    _REPO_ROOT / "AusGenome_LOGO_MAIN.png",
+)
 
 
-def _logo_data_uri(logo_path: Path = DEFAULT_LOGO_PATH, target_height_px: int = 96) -> str:
-    """Load the AGF logo, resize to target height (preserving aspect), return data URI.
+# ---------------------------------------------------------------------------
+# Logo embedding
+# ---------------------------------------------------------------------------
+def _logo_data_uri(target_height_px: int = 96) -> str:
+    """Return ``data:image/png;base64,...`` for the AGF logo, or ``""``.
 
-    target_height_px is 2-3x the intended display height for retina sharpness.
-    Returns an empty string if Pillow is missing or the file isn't found.
+    Resizes to ``target_height_px`` (2-3x the intended display height) so the
+    embedded PNG stays sharp on retina displays. Returns an empty string when
+    Pillow is missing or no logo file is found anywhere on the search path.
     """
     try:
-        from PIL import Image
+        from PIL import Image  # type: ignore
     except ImportError:
         return ""
-    if not logo_path.exists():
+
+    src = next((p for p in _LOGO_SEARCH_PATHS if p.exists()), None)
+    if src is None:
         return ""
-    img = Image.open(logo_path).convert("RGBA")
+
+    img = Image.open(src).convert("RGBA")
     w, h = img.size
     new_h = target_height_px
     new_w = int(round(w * new_h / h))
@@ -43,25 +77,88 @@ def _logo_data_uri(logo_path: Path = DEFAULT_LOGO_PATH, target_height_px: int = 
     return f"data:image/png;base64,{b64}"
 
 
-def detect_theme(title: str) -> str:
+# ---------------------------------------------------------------------------
+# Data preparation
+# ---------------------------------------------------------------------------
+_THEME_KEYWORDS = (
+    ("Nitrogen Fixation", ("nif", "nitrogen", "ammonia", "diazotrop")),
+    ("EPS/Biofilm", ("eps", "biofilm", "scaffold", "extracellular matrix", "capsul", "mineral")),
+    ("Redox/BDO", ("redox", "rex", "nadh", "butanediol", "bdo", "nox", "metabolic valve", "capacitor")),
+    ("Stress/Defense", ("resistance", "phage", "stress", "guardian", "firewall")),
+    ("Community", ("symbios", "consorti", "communit")),
+    ("Volatile Metabolite", ("isoprene", "volatile", "terpene", "mva", "xpk", "gas-phase", "sink")),
+)
+
+
+def _detect_theme(title: str) -> str:
     """Classify a hypothesis by keyword matching on its title."""
     t = title.lower()
-    if any(k in t for k in ["nif", "nitrogen", "ammonia", "diazotrop"]):
-        return "Nitrogen Fixation"
-    if any(k in t for k in ["eps", "biofilm", "scaffold", "extracellular matrix", "capsul", "mineral"]):
-        return "EPS/Biofilm"
-    if any(k in t for k in ["redox", "rex", "nadh", "butanediol", "bdo", "nox", "metabolic valve", "capacitor"]):
-        return "Redox/BDO"
-    if any(k in t for k in ["resistance", "phage", "stress", "guardian", "firewall"]):
-        return "Stress/Defense"
-    if any(k in t for k in ["symbios", "consorti", "communit"]):
-        return "Community"
-    if any(k in t for k in ["isoprene", "volatile", "terpene", "mva", "xpk", "gas-phase", "sink"]):
-        return "Volatile Metabolite"
+    for label, keywords in _THEME_KEYWORDS:
+        if any(k in t for k in keywords):
+            return label
     return "Other"
 
 
-def prepare_data(run_json_path: Path) -> dict:
+def _derive_themes_via_llm(hypotheses: list, goal_text: str) -> Optional[dict]:
+    """Ask the meta-review model to bucket hypotheses into 3-6 run-specific themes.
+
+    Returns ``{hypothesis_id: theme_label}`` on success, ``None`` on any
+    failure (import error, LLM call failure, JSON parse failure). Callers
+    should fall back to ``_detect_theme`` keyword matching when this
+    returns ``None``.
+    """
+    if not hypotheses:
+        return {}
+    try:
+        from src.llm.factory import get_llm_client
+        from src.config import settings
+    except Exception:
+        return None
+
+    indexed = [(i + 1, h.get("id"), h.get("title", "")) for i, h in enumerate(hypotheses)]
+    titles_block = "\n".join(f"{i}. {t}" for i, _, t in indexed)
+    prompt = (
+        "Group these scientific hypotheses into 3-6 themes by shared mechanism, "
+        "organism, technique, or approach.\n\n"
+        f"GOAL: {goal_text}\n\n"
+        f"HYPOTHESES:\n{titles_block}\n\n"
+        "Requirements:\n"
+        "- Each theme: 1-3 word label SPECIFIC to this goal "
+        "(e.g. 'Library SCRaMbLE', 'Synthetic Lethality', 'Reporter Selection')\n"
+        "- No 'Other' / 'General' / 'Miscellaneous' bucket\n"
+        "- Every hypothesis must appear in exactly one theme\n"
+        "- Aim for 2-4 hypotheses per theme; singletons are OK if genuinely unique\n\n"
+        "Return ONLY valid JSON in this exact form:\n"
+        '{"themes": {"<label>": [<1-based-index>, ...], ...}}'
+    )
+
+    try:
+        client = get_llm_client(model=settings.meta_review_model, agent_name="meta_review")
+        response = client.invoke(prompt)
+        import re
+        match = re.search(r"\{.*\}", response, re.DOTALL)
+        if not match:
+            return None
+        parsed = json.loads(match.group(0))
+        themes_dict = parsed.get("themes", {})
+        if not isinstance(themes_dict, dict) or not themes_dict:
+            return None
+
+        result: dict = {}
+        for label, indices in themes_dict.items():
+            if not isinstance(indices, list):
+                continue
+            for idx in indices:
+                if isinstance(idx, int) and 1 <= idx <= len(indexed):
+                    hyp_id = indexed[idx - 1][1]
+                    if hyp_id:
+                        result[hyp_id] = str(label)
+        return result or None
+    except Exception:
+        return None
+
+
+def _prepare_data(run_json_path: Path) -> dict:
     """Read a run JSON and return a dict of templating-ready fields."""
     with open(run_json_path) as f:
         data = json.load(f)
@@ -85,6 +182,12 @@ def prepare_data(run_json_path: Path) -> dict:
     elo_min = min(elo_values) if elo_values else 0
     elo_max = max(elo_values) if elo_values else 0
 
+    goal_text = (
+        goal.get("description") or goal.get("text") or goal.get("goal") or ""
+        if isinstance(goal, dict) else str(goal)
+    )
+    theme_overrides = _derive_themes_via_llm(hypotheses, goal_text) or {}
+
     hyp_cards = []
     for h in hypotheses:
         revs = review_map.get(h["id"], [])
@@ -97,7 +200,7 @@ def prepare_data(run_json_path: Path) -> dict:
             "elo": h["elo_rating"],
             "status": h["status"],
             "method": h.get("generation_method", "unknown"),
-            "theme": detect_theme(h["title"]),
+            "theme": theme_overrides.get(h["id"]) or _detect_theme(h["title"]),
             "statement": h.get("hypothesis_statement", ""),
             "rationale": h.get("rationale", ""),
             "mechanism": h.get("mechanism", ""),
@@ -152,7 +255,10 @@ def prepare_data(run_json_path: Path) -> dict:
     }
 
 
-SHARED_LOGIC_JS = r"""
+# ---------------------------------------------------------------------------
+# Inline JS: filter / sort / expand / render (variant-agnostic helpers)
+# ---------------------------------------------------------------------------
+_SHARED_LOGIC_JS = r"""
 function populateFilters() {
   const ts = document.getElementById('filterTheme');
   Object.keys(THEMES).sort().forEach(t => {
@@ -213,11 +319,30 @@ function nl2br(s){ return esc(s).replace(/\n/g, '<br>'); }
 """
 
 
-def render_v2_bento(p: dict, logo_path: Path = DEFAULT_LOGO_PATH) -> str:
+# ---------------------------------------------------------------------------
+# HTML renderer
+# ---------------------------------------------------------------------------
+def _render_html(p: dict) -> str:
     goal = p["goal"]
     goal_desc = escape(goal.get("description", ""))
     timestamp = escape(p["run_timestamp"])
-    logo_uri = _logo_data_uri(logo_path=logo_path, target_height_px=96)
+    logo_uri = _logo_data_uri(target_height_px=96)
+
+    # Brand row: include the <img> only when we actually have a logo; degrade
+    # to a text-only label otherwise so no broken-image icon is rendered.
+    if logo_uri:
+        brand_left = (
+            f'<img class="agf-logo" src="{logo_uri}" alt="Australian Genome Foundry">'
+            f'<div class="sep"></div>'
+            f'<div class="label">AI Co-Scientist · Hypothesis Report'
+            f'<small>{timestamp}</small></div>'
+        )
+    else:
+        brand_left = (
+            f'<div class="label">Australian Genome Foundry'
+            f'<small>AI Co-Scientist · Hypothesis Report · {timestamp}</small></div>'
+        )
+
     data_js = (
         f"const DATA = {json.dumps(p['hyp_cards'], default=str)};\n"
         f"const THEMES = {json.dumps(p['theme_counts'])};\n"
@@ -225,9 +350,12 @@ def render_v2_bento(p: dict, logo_path: Path = DEFAULT_LOGO_PATH) -> str:
         f"const STATUSES = {json.dumps(p['status_counts'])};\n"
         f"const INSIGHTS = {json.dumps(p['insights'])};\n"
     )
-    strongest_theme = max(p["theme_counts"], key=p["theme_counts"].get) if p["theme_counts"] else "—"
+    strongest_theme = (
+        max(p["theme_counts"], key=p["theme_counts"].get) if p["theme_counts"] else "—"
+    )
     strongest_count = max(p["theme_counts"].values()) if p["theme_counts"] else 0
     above_baseline = sum(1 for h in p["hyp_cards"] if h["elo"] > 1200)
+    date_prefix = timestamp[:10] if timestamp else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -378,7 +506,7 @@ button, input, select {{ font: inherit; color: inherit; }}
 .bh.open .bh-body {{ grid-template-rows: 1fr; }}
 .bh-body-inner {{ padding-top: 18px; border-top: 1px solid var(--line-soft); margin-top: 16px; }}
 .sect {{ margin: 14px 0; }}
-.sect h4 {{ font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); font-weight: 700; margin-bottom: 6px; }}
+.sect h4 {{ font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; margin-bottom: 6px; }}
 .sect .body {{ font-size: 14px; color: var(--ink); line-height: 1.6; white-space: pre-wrap; }}
 .sect ul {{ padding-left: 18px; font-size: 13px; }}
 .sect li {{ margin: 4px 0; }}
@@ -415,18 +543,14 @@ button, input, select {{ font: inherit; color: inherit; }}
 
 <div class="brand-row">
   <div class="brand-id">
-    <img class="agf-logo" src="{logo_uri}" alt="Australian Genome Foundry">
-    <div class="sep"></div>
-    <div class="label">AI Co-Scientist · Hypothesis Report
-      <small>{timestamp}</small>
-    </div>
+    {brand_left}
   </div>
   <div style="font-family:var(--mono);font-size:11px;color:var(--ink-dim);">Macquarie University</div>
 </div>
 
 <section class="hero">
   <div>
-    <div class="eyebrow">Research Goal · {timestamp[:10]}</div>
+    <div class="eyebrow">Research Goal · {date_prefix}</div>
     <h1>{goal_desc}</h1>
     <div class="meta">
       <span><strong>{p['total_hyps']}</strong> hypotheses generated</span>
@@ -483,7 +607,7 @@ button, input, select {{ font: inherit; color: inherit; }}
 
 <script>
 {data_js}
-{SHARED_LOGIC_JS}
+{_SHARED_LOGIC_JS}
 
 function bentoSize(rank) {{
   if (rank === 1) return 'size-xl';
@@ -573,10 +697,10 @@ Plotly.newPlot('chart-elo', [{{
   hovertemplate: '%{{text}}<br>Elo %{{y:.0f}}<extra></extra>'
 }}], baseLight, {{ displayModeBar: false, responsive: true }});
 
-// Themes — explicit inline layout with categorical y-axis.
-// Plotly mutates the layout object between newPlot calls, so the shared
-// baseLight.yaxis gets a numeric range from the chart-elo call above; passing
-// our own yaxis with type:'category' here keeps the bars rendering correctly.
+// Themes — explicit inline layout with categorical y-axis. Plotly mutates the
+// shared layout object between newPlot calls, so the baseLight.yaxis gets a
+// numeric range from the chart-elo call above; passing our own yaxis with
+// type:'category' here keeps the bars rendering correctly.
 Plotly.newPlot('chart-themes', [{{
   x: Object.values(THEMES), y: Object.keys(THEMES),
   type: 'bar', orientation: 'h',
@@ -600,37 +724,23 @@ Plotly.newPlot('chart-methods', [{{
 """
 
 
-def generate_html_report(run_json_path: str, output_path: str = None) -> str:
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+def generate_html_report(run_json_path: str, output_path: Optional[str] = None) -> str:
     """Read a run JSON and produce a self-contained interactive HTML file.
 
     Args:
-        run_json_path: Path to run_*.json
-        output_path: Optional output path. Defaults to same dir with .html extension.
+        run_json_path: Path to ``run_*.json``.
+        output_path: Optional output path. Defaults to the same directory with
+            a ``.html`` extension.
 
     Returns:
-        Path to generated HTML file.
+        Path to the generated HTML file.
     """
     src = Path(run_json_path)
     out = Path(output_path) if output_path else src.with_suffix(".html")
-    prepared = prepare_data(src)
+    prepared = _prepare_data(src)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render_v2_bento(prepared))
+    out.write_text(_render_html(prepared))
     return str(out)
-
-
-def main(argv: list[str]) -> int:
-    if len(argv) < 2:
-        print("usage: python -m src.utils.html_report <run.json> [<out.html>]", file=sys.stderr)
-        return 1
-    src = Path(argv[1])
-    if not src.exists():
-        print(f"ERROR: source JSON not found: {src}", file=sys.stderr)
-        return 1
-    out = generate_html_report(str(src), argv[2] if len(argv) > 2 else None)
-    out_path = Path(out)
-    print(f"Wrote {out}  ({out_path.stat().st_size / 1024:.1f} KB)")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv))
