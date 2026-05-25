@@ -46,6 +46,49 @@ def test_generation_prompt_requests_assumptions():
     )
 
 
+def test_all_four_generation_methods_request_assumptions():
+    """Tier 4 — every generation method's prompt must ask for assumptions.
+
+    The original B7 fix only patched the structured_prompt suffix used by
+    `literature_exploration`. The other three methods (`simulated_debate`,
+    `iterative_assumptions`, `research_expansion`) build prompts inline in
+    `_generate_via_*` and need the same schema fragment + REQUIRED directive.
+    Live run 66dfa26c showed only 2/12 hypotheses had assumptions because of
+    this gap.
+
+    Coverage check: the CRITICAL "REQUIRED, not optional" directive must
+    appear at least 4 times (one per generation-method prompt site).
+    """
+    import re
+
+    import src.agents.generation as gen_mod
+
+    src = inspect.getsource(gen_mod)
+    directive_pattern = r"CRITICAL: The `assumptions` array is REQUIRED, not optional"
+    count = len(re.findall(directive_pattern, src))
+    assert count >= 4, (
+        f"Tier-4 B7 regression: expected the REQUIRED directive in all 4 "
+        f"generation-method prompts (literature_exploration + 3 inline), "
+        f"found only {count}."
+    )
+
+    # Each of the 3 non-literature constructors must also pass assumptions=...
+    # so even a compliant LLM response is propagated to the Hypothesis.
+    for method_enum in (
+        "GenerationMethod.SIMULATED_DEBATE",
+        "GenerationMethod.ITERATIVE_ASSUMPTIONS",
+        "GenerationMethod.RESEARCH_EXPANSION",
+    ):
+        idx = src.index(method_enum)
+        # The constructor for this method ends with `generation_method=<enum>`;
+        # the assumptions= kwarg appears 5-15 lines above. Look back 800 chars.
+        block = src[max(0, idx - 800) : idx + 100]
+        assert "assumptions=[" in block, (
+            f"Tier-4 B7 regression: constructor for {method_enum} does not "
+            f"propagate data['assumptions'] into Hypothesis.assumptions."
+        )
+
+
 def test_inline_parser_populates_assumptions_from_data():
     """Part (b) — the inline construction at generation.py:1099-1129 builds
     Assumption objects from data['assumptions']. We replicate the pattern
@@ -99,5 +142,6 @@ def test_inline_parser_populates_assumptions_from_data():
 
 if __name__ == "__main__":
     test_generation_prompt_requests_assumptions()
+    test_all_four_generation_methods_request_assumptions()
     test_inline_parser_populates_assumptions_from_data()
     print("✓ B7 tests passed")

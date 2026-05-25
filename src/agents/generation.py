@@ -550,8 +550,19 @@ Return ONLY valid JSON:
             {{"phase": "Phase 2: Integrate and test", "go_no_go": "Criteria for success"}}
         ]
     }},
-    "citations": [{{"title": "Paper", "doi": "", "relevance": "Why relevant"}}]
-}}"""
+    "citations": [{{"title": "Paper", "doi": "", "relevance": "Why relevant"}}],
+    "assumptions": [
+        {{"statement": "Key biological/physical assumption this hypothesis depends on", "is_fundamental": true}},
+        {{"statement": "Methodological assumption (e.g., assay sensitivity sufficient)", "is_fundamental": false}}
+    ]
+}}
+
+CRITICAL: The `assumptions` array is REQUIRED, not optional. You MUST include
+exactly 3-5 entries enumerating the key biological, physical, methodological,
+and contextual assumptions the hypothesis depends on. Each entry MUST be a JSON
+object with both ``statement`` (string) and ``is_fundamental`` (boolean — true
+if its failure would invalidate the hypothesis outright, false for
+methodological / convenience assumptions)."""
 
         synthesis = await self.llm_client.ainvoke(synthesis_prompt)
         data = parse_llm_json(synthesis, agent_name="GenerationAgent-Debate")
@@ -587,6 +598,17 @@ Return ONLY valid JSON:
             literature_citations=[
                 Citation(**c) for c in data.get("citations", [])
                 if isinstance(c, dict) and "title" in c
+            ],
+            # B7 fix (Tier 4): populate assumptions[] from the LLM response,
+            # same pattern as the literature_exploration path.
+            assumptions=[
+                Assumption(
+                    id=f"asm_{i}",
+                    statement=a["statement"],
+                    is_fundamental=bool(a.get("is_fundamental", True)),
+                )
+                for i, a in enumerate(data.get("assumptions", []))
+                if isinstance(a, dict) and a.get("statement")
             ],
             generation_method=GenerationMethod.SIMULATED_DEBATE,
             elo_rating=1200.0
@@ -722,8 +744,20 @@ Return ONLY valid JSON:
             {{"phase": "Phase 2: Integrate and test", "go_no_go": "Criteria for success"}}
         ]
     }},
-    "citations": [{{"title": "Paper", "doi": "", "relevance": "Why relevant"}}]
-}}"""
+    "citations": [{{"title": "Paper", "doi": "", "relevance": "Why relevant"}}],
+    "assumptions": [
+        {{"statement": "Key biological/physical assumption this hypothesis depends on", "is_fundamental": true}},
+        {{"statement": "Methodological assumption (e.g., assay sensitivity sufficient)", "is_fundamental": false}}
+    ]
+}}
+
+CRITICAL: The `assumptions` array is REQUIRED, not optional. You MUST include
+exactly 3-5 entries enumerating the key biological, physical, methodological,
+and contextual assumptions the hypothesis depends on (this is in addition to
+the assumption chain reasoned through above; surface them explicitly in the
+JSON). Each entry MUST be a JSON object with both ``statement`` (string) and
+``is_fundamental`` (boolean — true if its failure would invalidate the
+hypothesis outright, false for methodological / convenience assumptions)."""
 
         synthesis = await self.llm_client.ainvoke(synthesis_prompt)
         data = parse_llm_json(synthesis, agent_name="GenerationAgent-Assumptions")
@@ -753,6 +787,17 @@ Return ONLY valid JSON:
             literature_citations=[
                 Citation(**c) for c in data.get("citations", [])
                 if isinstance(c, dict) and c.get("title")
+            ],
+            # B7 fix (Tier 4): populate assumptions[] from the LLM response,
+            # same pattern as the literature_exploration path.
+            assumptions=[
+                Assumption(
+                    id=f"asm_{i}",
+                    statement=a["statement"],
+                    is_fundamental=bool(a.get("is_fundamental", True)),
+                )
+                for i, a in enumerate(data.get("assumptions", []))
+                if isinstance(a, dict) and a.get("statement")
             ],
             generation_method=GenerationMethod.ITERATIVE_ASSUMPTIONS,
             elo_rating=1200.0
@@ -842,8 +887,19 @@ Return ONLY valid JSON:
         "success_criteria": "What constitutes success"
     }},
     "citations": [{{"title": "Paper", "doi": "", "relevance": "Why relevant"}}],
-    "chosen_direction": "Which direction from the overview this explores"
-}}"""
+    "chosen_direction": "Which direction from the overview this explores",
+    "assumptions": [
+        {{"statement": "Key biological/physical assumption this hypothesis depends on", "is_fundamental": true}},
+        {{"statement": "Methodological assumption (e.g., assay sensitivity sufficient)", "is_fundamental": false}}
+    ]
+}}
+
+CRITICAL: The `assumptions` array is REQUIRED, not optional. You MUST include
+exactly 3-5 entries enumerating the key biological, physical, methodological,
+and contextual assumptions the hypothesis depends on. Each entry MUST be a JSON
+object with both ``statement`` (string) and ``is_fundamental`` (boolean — true
+if its failure would invalidate the hypothesis outright, false for
+methodological / convenience assumptions)."""
 
         response = await self.llm_client.ainvoke(prompt)
         data = parse_llm_json(response, agent_name="GenerationAgent-Expansion")
@@ -879,6 +935,17 @@ Return ONLY valid JSON:
             literature_citations=[
                 Citation(**c) for c in data.get("citations", [])
                 if isinstance(c, dict) and c.get("title")
+            ],
+            # B7 fix (Tier 4): populate assumptions[] from the LLM response,
+            # same pattern as the literature_exploration path.
+            assumptions=[
+                Assumption(
+                    id=f"asm_{i}",
+                    statement=a["statement"],
+                    is_fundamental=bool(a.get("is_fundamental", True)),
+                )
+                for i, a in enumerate(data.get("assumptions", []))
+                if isinstance(a, dict) and a.get("statement")
             ],
             generation_method=GenerationMethod.RESEARCH_EXPANSION,
             elo_rating=1200.0
