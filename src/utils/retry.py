@@ -16,16 +16,35 @@ import random
 import time
 from typing import TypeVar, Callable, Any, Optional
 import structlog
+from botocore.exceptions import (
+    ClientError,
+    ConnectionError as BotoConnectionError,
+    HTTPClientError,
+)
 
 from src.utils.errors import (
+    ContentFilteredError,
     RetryableError,
     LLMTimeoutError,
     LLMRateLimitError,
     LLMClientError,
+    RunTimeLimitError,
 )
 
 logger = structlog.get_logger()
 T = TypeVar('T')
+
+_RETRYABLE_AWS_ERROR_CODES = {
+    "ThrottlingException",
+    "ServiceUnavailableException",
+    "InternalServerException",
+    "ModelTimeoutException",
+    "ModelNotReadyException",
+}
+# botocore's standard mode retried 500/502/503/504 whatever the code; 429 is
+# retried here in addition. A response without x-amzn-errortype (edge, proxy)
+# carries only the status.
+_RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
 
 
 def is_retryable_error(error: Exception) -> bool:
@@ -43,6 +62,28 @@ def is_retryable_error(error: Exception) -> bool:
     # Already classified as retryable
     if isinstance(error, RetryableError):
         return True
+
+    # A safety-filter block is deterministic for the prompt. Checked by type,
+    # before the substring checks, so a model ID or agent name in the message
+    # can never make it look transient.
+    if isinstance(error, (ContentFilteredError, RunTimeLimitError)):
+        return False
+
+    # AWS errors by type, code and HTTP status. botocore's own retries are off
+    # for Bedrock (one retry layer), so this covers what its standard mode
+    # retried for Converse (500/502/503/504 by status, ThrottlingException,
+    # ModelNotReadyException, connection and read failures) and also retries a
+    # bare 429 and ModelTimeoutException. The substring checks below miss e.g.
+    # InternalServerException, an unmodelled 503, and a ThrottlingException
+    # worded "Too many tokens".
+    # BotoConnectionError covers endpoint, connect-timeout, SSL and proxy
+    # failures; HTTPClientError covers read timeouts and closed connections.
+    if isinstance(error, (BotoConnectionError, HTTPClientError)):
+        return True
+    if isinstance(error, ClientError):
+        code = error.response.get("Error", {}).get("Code", "")
+        status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        return code in _RETRYABLE_AWS_ERROR_CODES or status in _RETRYABLE_HTTP_STATUS
 
     error_str = str(error).lower()
 
@@ -111,6 +152,15 @@ def classify_error(error: Exception) -> Exception:
     Returns:
         A more specific exception type if applicable.
     """
+    # Kept as is, as in is_retryable_error: the message names the model, and a
+    # date-stamped model ID (e.g. ...-20250429-v1:0) contains "429".
+    if isinstance(error, (ContentFilteredError, RunTimeLimitError)):
+        return error
+    # A permanent AWS error keeps its own type; "429" in an ARN or "timeout"
+    # in a validation message must not make it look like a rate limit.
+    if isinstance(error, ClientError) and not is_retryable_error(error):
+        return error
+
     error_str = str(error).lower()
 
     if '429' in error_str or 'rate limit' in error_str:
@@ -279,6 +329,7 @@ def sync_retry(
     base_delay: Optional[float] = None,
     max_delay: Optional[float] = None,
     operation_name: str = "LLM call",
+    remaining_time: Optional[Callable[[], Optional[float]]] = None,
     **kwargs
 ) -> Any:
     """Execute sync function with retry.
@@ -335,6 +386,9 @@ def sync_retry(
     total_attempts = max_retries + 1
 
     for attempt in range(total_attempts):
+        remaining = remaining_time() if remaining_time else None
+        if remaining is not None and remaining <= 0:
+            raise RunTimeLimitError("Run time limit reached before a model retry")
         try:
             return func(*args, **kwargs)
 
@@ -378,6 +432,10 @@ def sync_retry(
                 delay_seconds=round(actual_delay, 2)
             )
 
+            remaining = remaining_time() if remaining_time else None
+            if remaining is not None and actual_delay >= remaining:
+                time.sleep(max(0, remaining))
+                raise RunTimeLimitError("Run time limit reached during retry backoff")
             time.sleep(actual_delay)
 
     # All retries exhausted

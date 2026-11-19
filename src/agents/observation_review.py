@@ -64,7 +64,7 @@ class ObservationReviewAgent(BaseAgent):
 
         # Sort papers by citation count (prioritize high-impact papers)
         papers = sorted(
-            citation_graph.nodes.values(),
+            [p for p in citation_graph.nodes.values() if not getattr(p, 'is_retracted', False)],
             key=lambda p: p.citation_count,
             reverse=True
         )[:max_observations]
@@ -82,7 +82,7 @@ class ObservationReviewAgent(BaseAgent):
                     paper_title=paper.title,
                     observation_type=self._infer_observation_type(paper.abstract),
                     text=self._extract_key_finding(paper.abstract),
-                    context=paper.abstract[:300],  # First 300 chars as context
+                    context=paper.abstract,  # Preserve qualifications and contradictory findings.
                     relevance_score=self._calculate_relevance(paper, research_goal),
                     citation_count=paper.citation_count
                 )
@@ -209,9 +209,8 @@ class ObservationReviewAgent(BaseAgent):
 
 IMPORTANT: Return ONLY valid JSON matching the schema shown above. Do not include any text before or after the JSON."""
 
-        # Call LLM (using asyncio.to_thread for sync LLM client)
-        import asyncio
-        response = await asyncio.to_thread(self.llm_client.invoke, structured_prompt)
+        # Async invocation participates in the run's cancellation/deadline.
+        response = await self.llm_client.ainvoke(structured_prompt)
 
         # Parse response
         try:
@@ -219,7 +218,13 @@ IMPORTANT: Return ONLY valid JSON matching the schema shown above. Do not includ
 
             # Create ObservationExplanation objects
             explanations = []
+            expected_ids = {observation.id for observation in observations}
+            seen = set()
             for exp_data in data.get("explanations", []):
+                observation_id = exp_data.get("observation_id")
+                if observation_id not in expected_ids or observation_id in seen:
+                    raise CoScientistError("Observation review returned an unknown or duplicate observation ID")
+                seen.add(observation_id)
                 explanation = ObservationExplanation(
                     observation_id=exp_data["observation_id"],
                     hypothesis_id=hypothesis.id,
@@ -231,6 +236,9 @@ IMPORTANT: Return ONLY valid JSON matching the schema shown above. Do not includ
                 )
                 explanations.append(explanation)
 
+            if seen != expected_ids or not explanations:
+                raise CoScientistError("Observation review did not assess every supplied observation")
+
             # Create review score
             review_score = ObservationReviewScore(
                 id=generate_id("obs_review"),
@@ -238,9 +246,9 @@ IMPORTANT: Return ONLY valid JSON matching the schema shown above. Do not includ
                 research_goal_id=research_goal.id,
                 observations=observations,
                 explanations=explanations,
-                overall_score=data["overall_score"],
-                observations_explained_count=data["observations_explained_count"],
-                observations_total_count=data["observations_total_count"],
+                overall_score=sum(e.explanation_score for e in explanations) / len(explanations),
+                observations_explained_count=sum(e.explains and e.explanation_score >= 0.5 for e in explanations),
+                observations_total_count=len(observations),
                 strengths=data.get("strengths", []),
                 weaknesses=data.get("weaknesses", []),
                 summary=data["summary"]
@@ -256,7 +264,7 @@ IMPORTANT: Return ONLY valid JSON matching the schema shown above. Do not includ
 
             return review_score
 
-        except (json.JSONDecodeError, KeyError) as e:
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
             raise CoScientistError(
                 f"Failed to parse observation review response: {e}\nResponse: {response[:500]}"
             )
@@ -303,7 +311,8 @@ IMPORTANT: Return ONLY valid JSON matching the schema shown above. Do not includ
                 research_goal_id=research_goal.id,
                 observations=[],
                 explanations=[],
-                overall_score=0.0,
+                overall_score=None,
+                assessment_status="unavailable",
                 observations_explained_count=0,
                 observations_total_count=0,
                 strengths=[],

@@ -10,7 +10,7 @@ This client wraps the LangChain OpenAI integration with:
 from langchain_openai import ChatOpenAI
 from src.llm.base import BaseLLMClient
 from src.config import settings
-from src.utils.errors import LLMClientError
+from src.utils.errors import LLMClientError, RunTimeLimitError
 from src.utils.retry import retry_async, sync_retry
 from src.observability.tracing import trace_llm_call
 import structlog
@@ -45,6 +45,7 @@ class OpenAIClient(BaseLLMClient):
         super().__init__(model, cost_tracker)
 
         self.agent_name = agent_name
+        self.max_tokens = 8192
 
         # Prefer env var (set per-request by API middleware) over frozen settings
         import os
@@ -56,7 +57,8 @@ class OpenAIClient(BaseLLMClient):
             model=model,
             api_key=api_key,
             temperature=0.7,
-            max_tokens=8192,
+            max_tokens=self.max_tokens,
+            max_retries=0,  # retry_async/sync_retry own admission and accounting
             callbacks=self.callbacks  # Add tracing callbacks
         )
 
@@ -77,20 +79,16 @@ class OpenAIClient(BaseLLMClient):
         """Return (input_tokens, output_tokens) for billing.
 
         Prefers SDK-reported counts from response.usage_metadata. For GPT-5,
-        reasoning tokens are billed as output but reported separately in
-        output_token_details.reasoning — we add them so the tracker matches
-        OpenAI's actual billing. Falls back to estimator if unavailable.
+        output_tokens/completion_tokens include reasoning tokens. The reasoning
+        detail is a breakdown, not an additional charge. Falls back to an
+        estimator only when metadata is unavailable (the reservation is retained).
         """
         in_tok = out_tok = None
-        reasoning_tok = 0
 
         usage = getattr(response, "usage_metadata", None)
         if isinstance(usage, dict):
-            in_tok = usage.get("input_tokens") or usage.get("prompt_tokens")
-            out_tok = usage.get("output_tokens") or usage.get("completion_tokens")
-            details = usage.get("output_token_details") or {}
-            if isinstance(details, dict):
-                reasoning_tok = int(details.get("reasoning") or 0)
+            in_tok = self._usage_value(usage, "input_tokens", "prompt_tokens")
+            out_tok = self._usage_value(usage, "output_tokens", "completion_tokens")
 
         meta = getattr(response, "response_metadata", None) or {}
         token_usage = meta.get("token_usage") if isinstance(meta, dict) else None
@@ -99,22 +97,23 @@ class OpenAIClient(BaseLLMClient):
                 in_tok = token_usage.get("prompt_tokens")
             if out_tok is None:
                 out_tok = token_usage.get("completion_tokens")
-            details = token_usage.get("completion_tokens_details") or {}
-            if isinstance(details, dict) and not reasoning_tok:
-                reasoning_tok = int(details.get("reasoning_tokens") or 0)
 
         if in_tok is None or out_tok is None:
             return self._estimate_tokens(prompt), self._estimate_tokens(content)
 
-        return int(in_tok), int(out_tok) + reasoning_tok
+        return int(in_tok), int(out_tok)
 
     def _do_invoke(self, prompt: str):
-        response = self.llm.invoke(prompt)
-        return response.content, response
+        with self._budgeted_request(prompt, self.max_tokens) as reservation:
+            response = self.llm.invoke(prompt, timeout=self._request_timeout(settings.llm_timeout_seconds))
+            self._settle_response(reservation, response, prompt, response.content)
+            return response.content, response
 
     async def _do_ainvoke(self, prompt: str):
-        response = await self.llm.ainvoke(prompt)
-        return response.content, response
+        with self._budgeted_request(prompt, self.max_tokens) as reservation:
+            response = await self.llm.ainvoke(prompt, timeout=self._request_timeout(settings.llm_timeout_seconds))
+            self._settle_response(reservation, response, prompt, response.content)
+            return response.content, response
 
     def invoke(self, prompt: str) -> str:
         """Invoke OpenAI synchronously with retry and cost tracking.
@@ -130,21 +129,18 @@ class OpenAIClient(BaseLLMClient):
             LLMClientError: If invocation fails after all retries.
         """
         try:
+            # Refused before the call once the spend limit is reached
+            self.cost_tracker.ensure_budget_available()
             # Use sync retry wrapper
             content, response = sync_retry(
                 self._do_invoke,
                 prompt,
-                operation_name=f"OpenAI invoke ({self.agent_name})"
+                operation_name=f"OpenAI invoke ({self.agent_name})",
+                remaining_time=self.cost_tracker.remaining_run_seconds,
             )
 
             input_tokens, output_tokens = self._extract_usage(response, prompt, content)
 
-            self.cost_tracker.check_and_add_usage(
-                agent=self.agent_name,
-                model=self.model,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens
-            )
 
             logger.debug(
                 "openai_invoke_success",
@@ -155,7 +151,7 @@ class OpenAIClient(BaseLLMClient):
 
             return content
 
-        except BudgetExceededError:
+        except (BudgetExceededError, RunTimeLimitError):
             # Re-raise budget errors without wrapping
             raise
 
@@ -196,22 +192,18 @@ class OpenAIClient(BaseLLMClient):
             LLMClientError: If invocation fails for other reasons.
         """
         try:
+            # Refused before the call once the spend limit is reached
+            self.cost_tracker.ensure_budget_available()
             # Use async retry wrapper with timeout
-            content, response = await retry_async(
+            content, response = await self._within_run_time(retry_async(
                 self._do_ainvoke,
                 prompt,
                 timeout=settings.llm_timeout_seconds,
                 operation_name=f"OpenAI ainvoke ({self.agent_name})"
-            )
+            ))
 
             input_tokens, output_tokens = self._extract_usage(response, prompt, content)
 
-            self.cost_tracker.check_and_add_usage(
-                agent=self.agent_name,
-                model=self.model,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens
-            )
 
             logger.debug(
                 "openai_ainvoke_success",
@@ -222,7 +214,7 @@ class OpenAIClient(BaseLLMClient):
 
             return content
 
-        except BudgetExceededError:
+        except (BudgetExceededError, RunTimeLimitError):
             # Re-raise budget errors without wrapping
             raise
 

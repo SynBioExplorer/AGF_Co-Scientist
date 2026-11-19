@@ -22,11 +22,15 @@ Terminal conditions:
 - Compute budget exhausted
 - Quality threshold met
 - Scientist manually stops
+- LLM tasks keep failing (STALLED_ITERATIONS_LIMIT); a run that ends without
+  hypotheses, for any reason, raises RunAbortedError
 """
 
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import asyncio
+import time
+import json
 import sys
 from pathlib import Path
 
@@ -34,6 +38,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent / "03_Architecture"))
 from schemas import (
     ResearchGoal,
+    ResearchOverview,
     ResearchPlanConfiguration,
     EvaluationCriterion,
     AgentTask,
@@ -55,18 +60,52 @@ from src.agents.base import BaseAgent
 from src.agents.safety import SafetyAgent
 from src.llm.factory import get_llm_client
 from src.supervisor.task_queue import TaskQueue
-from src.supervisor.statistics import SupervisorStatistics
+from src.scientific_readiness import assess_readiness
+from src.supervisor.statistics import BASE_AGENT_WEIGHTS, SupervisorStatistics
 from src.storage.async_adapter import AsyncStorageAdapter
 from src.config import settings
 from src.utils.ids import generate_id, generate_task_id
 from src.utils.json_parser import parse_llm_json
 from src.utils.strategy_selector import select_evolution_strategy
-from src.utils.errors import LLMClientError, CheckpointError
+from src.utils.errors import (
+    CoScientistError,
+    LLMClientError,
+    LLMTimeoutError,
+    CheckpointError,
+    ContentFilteredError,
+    RetryableError,
+    RunAbortedError,
+    RunTimeLimitError,
+)
 from src.observability.tracing import trace_agent
 
 import structlog
 
 logger = structlog.get_logger()
+
+# An iteration stalls when no task that needs the LLM succeeds and at least one
+# task's LLM call fails (LLMClientError: content filter, timeout, throttling, a
+# denied call). Until the run has a hypothesis any task failure counts, so a
+# model whose replies never parse also fails the run; after that, a reply that
+# does not parse neither stalls nor resets the count.
+#
+# A deterministic failure (the content filter, a denied or invalid call) ends
+# the loop after this many stalled iterations in a row. With an empty pool only
+# generation has work, one task per iteration at the default weights, so that
+# is three generation attempts.
+STALLED_ITERATIONS_LIMIT = 3
+
+# A transient failure (RetryableError: a timeout, throttling or a 5xx that the
+# LLM client already retried) is waited out instead: each stalled iteration is
+# followed by a pause of 30 s, doubling up to 5 min, and the stalled iterations
+# end the loop only once the stall has also lasted this long, counted from the
+# start of its first iteration. One transient failure makes the whole streak
+# transient.
+TRANSIENT_STALL_MIN_SECONDS = 600
+
+# Proximity can fall back without an LLM. Observation review counts as progress
+# only when its result explicitly records an actual evidence-assessment call.
+_NO_LLM_SIGNAL = frozenset({AgentType.PROXIMITY, AgentType.OBSERVATION_REVIEW})
 
 
 class SupervisorAgent(BaseAgent):
@@ -102,6 +141,13 @@ class SupervisorAgent(BaseAgent):
         self.agent_weights: Dict[AgentType, float] = self._initialize_weights()
         self.iteration = 0
         self.cost_tracker = get_tracker(budget_aud=settings.budget_aud)
+        # The loop stops short of the budget by this much, which the final
+        # meta-review, overview and report may then use.
+        self.cost_tracker.finalization_reserve_aud = (
+            self.cost_tracker.budget_aud * settings.finalization_reserve_fraction)
+        self.cost_tracker.finalizing = False
+        # Why the loop ended (None: max iterations); the entrypoint reports it
+        self.terminal_reason: Optional[str] = None
 
         # Safety agent for hypothesis review
         self.safety_agent = SafetyAgent()
@@ -120,6 +166,15 @@ class SupervisorAgent(BaseAgent):
         # Concurrency control for async worker execution (Paper Figure 2)
         self._worker_semaphore = asyncio.Semaphore(settings.max_workers)
 
+        # Stall tracking (see STALLED_ITERATIONS_LIMIT)
+        self._stalled_iterations = 0
+        self._stall_started_at: Optional[datetime] = None
+        self._stall_transient = False
+        self._last_task_error: Optional[Exception] = None
+        # Set when a run with hypotheses ended on, or during, stalled
+        # iterations; the entrypoint shows it with the completed run.
+        self.stall_warning: Optional[str] = None
+
         # Agent instances (lazy-loaded)
         self._agents: Dict[AgentType, Any] = {}
 
@@ -136,16 +191,9 @@ class SupervisorAgent(BaseAgent):
         # produced 40-55 hypotheses but only 21-29 matches (55-62% never
         # reviewed). New mix favours coverage. The pool-size cap in the
         # GENERATION branch of _create_task_for_agent backs this up as a
-        # self-regulating hard limit.
-        return {
-            AgentType.GENERATION: 0.15,          # 15% - create hypotheses (was 0.25)
-            AgentType.REFLECTION: 0.25,          # 25% - INITIAL + FULL + DEEP_VERIFICATION reviews
-            AgentType.RANKING: 0.30,             # 30% - tournament matches (was 0.20)
-            AgentType.EVOLUTION: 0.13,           # 13% - refine top hypotheses
-            AgentType.OBSERVATION_REVIEW: 0.08,  # 8% - validate against literature
-            AgentType.PROXIMITY: 0.05,           # 5% - cluster similar hypotheses
-            AgentType.META_REVIEW: 0.04,         # 4% - synthesize feedback
-        }
+        # self-regulating hard limit. One table, shared with
+        # SupervisorStatistics.recommend_agent_weights.
+        return dict(BASE_AGENT_WEIGHTS)
 
     async def _update_context_memory(self, goal_id: str) -> None:
         """Accumulate insights from meta-review and hypotheses into context memory.
@@ -179,9 +227,17 @@ class SupervisorAgent(BaseAgent):
             explored=len(self._explored_directions),
         )
 
-    def _format_context_for_prompt(self) -> str:
-        """Format accumulated context memory as a prompt section for agents."""
-        if not self._context_insights and not self._explored_directions:
+    def _format_context_for_prompt(self, for_review: bool = False) -> str:
+        """Format accumulated context memory as a prompt section for agents.
+
+        for_review: the context for a reviewer, without the explored
+        directions. Those are every title in the run, the reviewed
+        hypothesis's own among them, under "do NOT repeat these", which is
+        guidance for generating new hypotheses: a reviewer took it as a
+        reason to fault a hypothesis for its own title.
+        """
+        explored = [] if for_review else self._explored_directions
+        if not self._context_insights and not explored:
             return ""
 
         parts = []
@@ -190,9 +246,9 @@ class SupervisorAgent(BaseAgent):
             for item in self._context_insights[-15:]:
                 parts.append(f"  - {item}")
 
-        if self._explored_directions:
+        if explored:
             parts.append("\nALREADY EXPLORED DIRECTIONS (do NOT repeat these):")
-            for d in self._explored_directions[-20:]:
+            for d in explored[-20:]:
                 parts.append(f"  - {d}")
 
         return "\n".join(parts)
@@ -259,7 +315,16 @@ class SupervisorAgent(BaseAgent):
 
         Returns:
             Status message with summary of execution.
+
+        Raises:
+            RunAbortedError: The run produced no hypotheses; str() is the
+                user-facing reason.
         """
+        started_at = datetime.now()
+        if max_execution_time_seconds is None:
+            max_execution_time_seconds = settings.supervisor_max_execution_seconds
+        self.cost_tracker.deadline_monotonic = time.monotonic() + max_execution_time_seconds
+
         self.log_execution(
             task="supervisor_orchestration",
             goal=research_goal.description[:100],
@@ -275,8 +340,15 @@ class SupervisorAgent(BaseAgent):
         # Store research goal
         await self.storage.add_research_goal(research_goal)
 
-        # Step 1: Parse research goal into configuration
-        config = await self._parse_research_goal(research_goal)
+        # Step 1: Parse research goal into configuration. A filter block on this
+        # prompt already ends the run (the call is outside the parse fallback);
+        # raised as RunAbortedError, its message gives the same advice as a
+        # blocked generation prompt.
+        try:
+            config = await self._parse_research_goal(research_goal)
+        except ContentFilteredError as e:
+            self._last_task_error = e
+            raise RunAbortedError(self._no_hypotheses_reason(None)) from e
         logger.info(
             "research_config_created",
             config_id=config.research_goal_id,
@@ -291,15 +363,16 @@ class SupervisorAgent(BaseAgent):
         terminal_reason = None
 
         # Track workflow start time for absolute time limit (AGENT-C1 fix)
-        started_at = datetime.now()
-        if max_execution_time_seconds is None:
-            max_execution_time_seconds = settings.supervisor_max_execution_seconds
-
         # B3 fix: expose timing on self so _execute_iteration can compute the
         # drain-phase threshold without changing its signature.
         self._workflow_started_at = started_at
         self._max_execution_time_seconds = max_execution_time_seconds
+        # The deadline established before goal parsing also covers finalization.
         self._drain_iterations = 0
+        self._stalled_iterations = 0
+        self._last_task_error = None
+        self.stall_warning = None
+        self.terminal_reason = None
 
         logger.info(
             "supervisor_time_limit_set",
@@ -349,13 +422,34 @@ class SupervisorAgent(BaseAgent):
             self.agent_weights = await self.statistics.recommend_agent_weights(
                 research_goal.id, stats
             )
+            if not settings.enable_evolution:
+                # The run's form turned evolution off: weight 0 schedules none
+                self.agent_weights[AgentType.EVOLUTION] = 0.0
             logger.info(
                 "weights_adjusted",
                 weights={k.value: round(v, 2) for k, v in self.agent_weights.items()}
             )
 
             # Execute one iteration
-            await self._execute_iteration(research_goal)
+            stalled = await self._execute_iteration(research_goal)
+
+            if self._stall_limit_reached():
+                terminal_reason = (
+                    f"No LLM task succeeded in {self._stalled_iterations} "
+                    f"iterations in a row"
+                )
+                self.stall_warning = (
+                    f"The run stopped early: no LLM task succeeded in "
+                    f"{self._stalled_iterations} iterations in a row "
+                    f"({self._failure_cause(self._last_task_error)})."
+                )
+                logger.error(
+                    "stalled_iterations_limit_reached",
+                    iteration=self.iteration,
+                    last_error=str(self._last_task_error)[:300],
+                    error_type=type(self._last_task_error).__name__,
+                )
+                break
 
             # Update context memory (self-improving loop)
             await self._update_context_memory(research_goal.id)
@@ -369,6 +463,37 @@ class SupervisorAgent(BaseAgent):
                 iteration=self.iteration,
                 hypotheses=stats.total_hypotheses,
                 convergence=round(stats.tournament_convergence_score, 3)
+            )
+
+            # Wait out a transient failure (see TRANSIENT_STALL_MIN_SECONDS),
+            # after an iteration that stalled and before another one runs.
+            if stalled and self._stall_transient and self.iteration < max_iterations:
+                pause = min(30 * 2 ** (self._stalled_iterations - 1), 300)
+                logger.warning(
+                    "stalled_iteration_pause",
+                    seconds=pause,
+                    stalled_iterations=self._stalled_iterations,
+                )
+                await asyncio.sleep(pause)
+
+        self.terminal_reason = terminal_reason
+
+        # Whatever ended the loop, a run without a single hypothesis has nothing
+        # to report. Raise so aws_entrypoint.py marks it failed and sends the
+        # failure email instead of "Your run is ready" for an empty report; this
+        # also skips the final overview, which would resend the failing prompts.
+        if not await self.storage.get_hypotheses_by_goal(research_goal.id):
+            self.cost_tracker.print_summary()
+            raise RunAbortedError(self._no_hypotheses_reason(terminal_reason))
+
+        # A loop that ended another way (max iterations, time, budget) while
+        # its LLM calls were still failing is reported too.
+        if self._stalled_iterations and not self.stall_warning:
+            n = self._stalled_iterations
+            self.stall_warning = (
+                f"The run ended while its LLM calls were failing: no LLM task "
+                f"succeeded in its last {n} iteration{'s' if n != 1 else ''} "
+                f"({self._failure_cause(self._last_task_error)})."
             )
 
         # Step 4: Generate final research overview
@@ -513,6 +638,8 @@ Respond with ONLY the JSON object."""
         ]
 
         for i, method in enumerate(methods):
+            # Literature retrieval is not a task parameter: every generation
+            # task uses it while settings.enable_web_search is on.
             task = AgentTask(
                 id=generate_task_id(),
                 agent_type=AgentType.GENERATION,
@@ -521,7 +648,6 @@ Respond with ONLY the JSON object."""
                 parameters={
                     "goal_id": goal_id,
                     "method": method.value,
-                    "use_web_search": i == 0,  # First task uses web search
                 },
                 status="pending"
             )
@@ -549,6 +675,9 @@ Respond with ONLY the JSON object."""
                 result = await self._execute_task(task, research_goal)
                 self.task_queue.update_task_status(task.id, "complete", result=result)
                 return (task, result, None)
+            except asyncio.CancelledError:
+                self.task_queue.update_task_status(task.id, "failed", result={"reason": "Task cancelled at an execution limit"})
+                raise
             except Exception as e:
                 logger.error(
                     "task_execution_failed",
@@ -559,7 +688,7 @@ Respond with ONLY the JSON object."""
                 self.task_queue.update_task_status(task.id, "failed")
                 return (task, None, e)
 
-    async def _execute_iteration(self, research_goal: ResearchGoal) -> None:
+    async def _execute_iteration(self, research_goal: ResearchGoal) -> bool:
         """Execute one iteration with phase-based parallel execution.
 
         Tasks are organized into dependency-ordered phases (Paper Figure 2).
@@ -573,7 +702,18 @@ Respond with ONLY the JSON object."""
 
         Args:
             research_goal: Current research goal.
+
+        Returns:
+            True if the iteration stalled (see STALLED_ITERATIONS_LIMIT).
         """
+        iteration_started_at = datetime.now()
+        stalled = False
+        remaining = self._max_execution_time_seconds - (
+            iteration_started_at - self._workflow_started_at).total_seconds()
+        if remaining <= 0:
+            logger.warning("run_time_limit_reached_before_iteration")
+            return False
+
         # B3 drain-phase gate: once elapsed crosses drain_phase_start_fraction
         # of the time budget, stop scheduling GENERATION/EVOLUTION/etc. and
         # only schedule RANKING so the unmatched-hypothesis guard at
@@ -597,7 +737,7 @@ Respond with ONLY the JSON object."""
                 )
                 # Skip scheduling; outer loop will either terminate via the
                 # unmatched guard (best case) or hit max_iterations.
-                return
+                return stalled
             logger.info(
                 "drain_phase_active",
                 iteration=self.iteration,
@@ -633,9 +773,25 @@ Respond with ONLY the JSON object."""
 
         tasks_per_iteration = 12
         executed_count = 0
+        llm_successes = 0
+        failures: list[Exception] = []
 
         for phase_idx, phase_agents in enumerate(execution_phases):
+            remaining = min(
+                self._max_execution_time_seconds - (datetime.now() - self._workflow_started_at).total_seconds(),
+                settings.supervisor_iteration_timeout - (datetime.now() - iteration_started_at).total_seconds(),
+            )
+            if remaining <= 0:
+                logger.warning("execution_time_limit_skipping_phases", phase=phase_idx + 1)
+                break
+            # Past the spend limit every task would fail after one billed call
+            if self.cost_tracker.limit_reached():
+                logger.warning("budget_exhausted_skipping_phases", phase=phase_idx + 1)
+                break
+
             phase_tasks: list[AgentTask] = []
+            # The work of this phase's tasks, so none is dispatched twice
+            batch_keys: set = set()
 
             for agent_type in phase_agents:
                 # B3 drain: give all task slots to RANKING to drain unmatched
@@ -649,23 +805,41 @@ Respond with ONLY the JSON object."""
                     num_tasks = max(1, int(weight * tasks_per_iteration))
                 for _ in range(num_tasks):
                     task = self.task_queue.get_next_task(agent_type)
+                    # A queued task whose work is done, or already in this
+                    # batch, is dropped instead of run again
+                    while task and await self._is_duplicate_work(task, batch_keys):
+                        self.task_queue.update_task_status(task.id, "skipped")
+                        task = self.task_queue.get_next_task(agent_type)
                     if not task:
                         task = await self._create_task_for_agent(
                             agent_type, research_goal
                         )
-                        if not task:
+                        if not task or await self._is_duplicate_work(task, batch_keys):
                             continue
-                        self.task_queue.add_task(task)  # Register so update_task_status can find it
+                        # Tracked, not queued: a queued copy would still be
+                        # pending at the next get_next_task of this loop
+                        self.task_queue.register_task(task)
+                    key = self._work_key(task)
+                    if key:
+                        batch_keys.add(key)
                     phase_tasks.append(task)
 
             if not phase_tasks:
                 continue
 
             # Execute all tasks in this phase concurrently
-            results = await asyncio.gather(
-                *[self._execute_task_with_semaphore(t, research_goal) for t in phase_tasks],
-                return_exceptions=True
+            remaining = min(
+                self._max_execution_time_seconds - (datetime.now() - self._workflow_started_at).total_seconds(),
+                settings.supervisor_iteration_timeout - (datetime.now() - iteration_started_at).total_seconds(),
             )
+            try:
+                results = await asyncio.wait_for(asyncio.gather(
+                    *[self._execute_task_with_semaphore(t, research_goal) for t in phase_tasks],
+                    return_exceptions=True,
+                ), timeout=max(0, remaining))
+            except asyncio.TimeoutError:
+                logger.warning("execution_time_limit_cancelled_phase", phase=phase_idx + 1)
+                break
 
             for item in results:
                 if isinstance(item, Exception):
@@ -674,6 +848,42 @@ Respond with ONLY the JSON object."""
                 _task, _result, _error = item
                 if _error is None:
                     executed_count += 1
+                    if (_task.agent_type not in _NO_LLM_SIGNAL or
+                        (_task.agent_type == AgentType.OBSERVATION_REVIEW and _result.get("llm_used"))):
+                        llm_successes += 1
+                elif not isinstance(_error, BudgetExceededError):
+                    # Budget exhaustion has its own terminal condition.
+                    failures.append(_error)
+
+        # Stall tracking (see STALLED_ITERATIONS_LIMIT)
+        if llm_successes:
+            self._stalled_iterations = 0
+        elif failures:
+            if not await self.storage.get_hypotheses_by_goal(research_goal.id):
+                counted = failures
+            else:
+                counted = [e for e in failures if isinstance(e, LLMClientError)]
+            if counted:
+                stalled = True
+                if not self._stalled_iterations:
+                    self._stall_started_at = iteration_started_at
+                    self._stall_transient = False
+                self._stalled_iterations += 1
+                # Transient for the rest of the streak once seen: a reply that
+                # does not parse, or a filter block, right after an outage must
+                # not cut the wait short.
+                self._stall_transient = self._stall_transient or any(
+                    isinstance(e, RetryableError) for e in counted
+                )
+                self._last_task_error = counted[-1]
+                logger.warning(
+                    "iteration_stalled",
+                    iteration=self.iteration,
+                    failed_tasks=len(counted),
+                    stalled_iterations=self._stalled_iterations,
+                    transient=self._stall_transient,
+                    last_error=str(self._last_task_error)[:300],
+                )
 
         # After all phases: guarantee top-N hypotheses (by INITIAL quality_score)
         # get a FULL review next iteration, independent of the INITIAL-pass
@@ -685,6 +895,7 @@ Respond with ONLY the JSON object."""
             count=executed_count,
             queue_stats=self.task_queue.get_statistics()
         )
+        return stalled
 
     async def _check_duplicate(
         self,
@@ -744,23 +955,85 @@ Respond with ONLY the JSON object."""
             reverse=True,
         )[:top_n]
 
+        queued = 0
         for r in candidates:
-            self.task_queue.add_task(AgentTask(
-                id=generate_task_id(),
-                agent_type=AgentType.REFLECTION,
-                task_type="review_hypothesis",
-                priority=9,  # parity with INITIAL so FULL doesn't starve in queue
-                parameters={
-                    "hypothesis_id": r.hypothesis_id,
-                    "review_type": ReviewType.FULL.value,
-                },
-                status="pending",
-            ))
+            # priority 9: parity with INITIAL so FULL doesn't starve in queue
+            queued += await self._queue_review(r.hypothesis_id, ReviewType.FULL, priority=9)
         logger.info(
             "full_review_queued_top_n",
             goal_id=goal_id,
-            n=len(candidates),
+            n=queued,
         )
+
+    @staticmethod
+    def _work_key(task: AgentTask) -> Optional[tuple]:
+        """What a task works on, where the same work must not run twice: one
+        review type of one hypothesis, a match of two hypotheses, the
+        proximity graph. None for the other tasks."""
+        params = task.parameters or {}
+        if task.agent_type == AgentType.REFLECTION and params.get("hypothesis_id"):
+            return ("review", params["hypothesis_id"],
+                    params.get("review_type", ReviewType.INITIAL.value))
+        if task.agent_type == AgentType.RANKING and params.get("hypothesis_a_id"):
+            return ("match", *sorted((params["hypothesis_a_id"],
+                                      params.get("hypothesis_b_id") or "")))
+        if task.agent_type == AgentType.PROXIMITY:
+            return ("proximity",)
+        if task.agent_type == AgentType.OBSERVATION_REVIEW and params.get("hypothesis_id"):
+            return ("observation", params["hypothesis_id"])
+        return None
+
+    def _keys_in_flight(self) -> set:
+        """The work keys of the tasks that are queued or dispatched and not
+        yet finished."""
+        return {key for t in self.task_queue.get_all_tasks()
+                if t.status in ("pending", "running") and (key := self._work_key(t))}
+
+    async def _is_duplicate_work(self, task: AgentTask, batch_keys: set) -> bool:
+        """Whether a task repeats work: its key is already in this batch or,
+        for a review, a review of that type of that hypothesis is stored."""
+        key = self._work_key(task)
+        if key is None:
+            return False
+        if key in batch_keys:
+            return True
+        if key[0] == "review":
+            reviews = await self.storage.get_reviews_for_hypothesis(key[1])
+            return any(r.review_type == ReviewType(key[2]) for r in reviews)
+        if key[0] == "observation":
+            review = await self.storage.get_observation_review(key[1])
+            return bool(review and review.observations_total_count > 0
+                        and getattr(review, "assessment_status", "complete") == "complete")
+        return False
+
+    async def _queue_review(
+        self,
+        hypothesis_id: str,
+        review_type: ReviewType,
+        priority: int,
+        task_type: str = "review_hypothesis",
+    ) -> bool:
+        """Queue a review unless the same review is queued, running or done.
+
+        Returns whether it was queued.
+        """
+        if ("review", hypothesis_id, review_type.value) in self._keys_in_flight():
+            return False
+        reviews = await self.storage.get_reviews_for_hypothesis(hypothesis_id)
+        if any(r.review_type == review_type for r in reviews):
+            return False
+        self.task_queue.add_task(AgentTask(
+            id=generate_task_id(),
+            agent_type=AgentType.REFLECTION,
+            task_type=task_type,
+            priority=priority,
+            parameters={
+                "hypothesis_id": hypothesis_id,
+                "review_type": review_type.value,
+            },
+            status="pending",
+        ))
+        return True
 
     async def _create_task_for_agent(
         self,
@@ -820,18 +1093,29 @@ Respond with ONLY the JSON object."""
             )
 
         elif agent_type == AgentType.REFLECTION:
-            # Find hypotheses needing initial review first
-            needing_review = await self.storage.get_hypotheses_needing_review(
-                goal_id, limit=1
-            )
-            if needing_review:
+            in_flight = self._keys_in_flight()
+            # Unreviewed hypotheses first, highest Elo first, whatever their
+            # status: an evolved child plays matches before any review and is
+            # IN_TOURNAMENT by then, which get_hypotheses_needing_review
+            # (GENERATED only) never returns. One already queued or in this
+            # batch is left to that task.
+            reviewed_ids = {
+                r.hypothesis_id
+                for r in await self.storage.get_all_reviews(goal_id=goal_id)
+            }
+            for h in await self.storage.get_hypotheses_by_goal(goal_id):
+                if (h.id in reviewed_ids
+                        or h.status in (HypothesisStatus.REQUIRES_SAFETY_REVIEW,
+                                        HypothesisStatus.ARCHIVED)
+                        or ("review", h.id, ReviewType.INITIAL.value) in in_flight):
+                    continue
                 return AgentTask(
                     id=generate_task_id(),
                     agent_type=AgentType.REFLECTION,
                     task_type="review_hypothesis",
                     priority=9,
                     parameters={
-                        "hypothesis_id": needing_review[0].id,
+                        "hypothesis_id": h.id,
                         "review_type": ReviewType.INITIAL.value,
                     },
                     status="pending"
@@ -854,13 +1138,13 @@ Respond with ONLY the JSON object."""
                 )
                 has_deep = any(
                     r.review_type == ReviewType.DEEP_VERIFICATION for r in reviews
-                )
+                ) or ("review", hyp.id, ReviewType.DEEP_VERIFICATION.value) in in_flight
                 if has_passing_full and not has_deep:
                     return AgentTask(
                         id=generate_task_id(),
                         agent_type=AgentType.REFLECTION,
                         task_type="deep_verification_review",
-                        priority=8,
+                        priority=10,
                         parameters={
                             "hypothesis_id": hyp.id,
                             "review_type": ReviewType.DEEP_VERIFICATION.value,
@@ -879,7 +1163,7 @@ Respond with ONLY the JSON object."""
                 )
                 has_sim = any(
                     r.review_type == ReviewType.SIMULATION for r in reviews
-                )
+                ) or ("review", hyp.id, ReviewType.SIMULATION.value) in in_flight
                 if has_passing_full and not has_sim:
                     return AgentTask(
                         id=generate_task_id(),
@@ -1056,41 +1340,27 @@ Respond with ONLY the JSON object."""
                 )
 
         elif agent_type == AgentType.OBSERVATION_REVIEW:
-            # B5 fix: queue up to OBSERVATION_BATCH_CAP eligible hypotheses
-            # per call (was: single early-return, so only 1 observation
-            # review per iteration regardless of pool size).
-            OBSERVATION_BATCH_CAP = 3
-            eligible_statuses = {
-                HypothesisStatus.INITIAL_REVIEW,
-                HypothesisStatus.FULL_REVIEW,
-                HypothesisStatus.IN_TOURNAMENT,
-            }
+            generator = self._agents.get(AgentType.GENERATION)
+            graph = generator.literature_graph(goal_id) if generator and settings.enable_web_search else None
+            if not graph or not any(p.abstract and not getattr(p, "is_retracted", False)
+                                    for p in graph.nodes.values()):
+                return None
+            in_flight = self._keys_in_flight()
             hypotheses = await self.storage.get_hypotheses_by_goal(goal_id)
-            first_task: Optional[AgentTask] = None
-            queued = 0
-            for h in hypotheses:
-                if h.status not in eligible_statuses:
+            for hypothesis in sorted(hypotheses, key=lambda h: h.elo_rating, reverse=True):
+                if hypothesis.status in (HypothesisStatus.ARCHIVED, HypothesisStatus.REQUIRES_SAFETY_REVIEW):
                     continue
-                existing = await self.storage.get_observation_review(h.id)
-                if existing:
+                if ("observation", hypothesis.id) in in_flight:
                     continue
-                task = AgentTask(
-                    id=generate_task_id(),
-                    agent_type=AgentType.OBSERVATION_REVIEW,
-                    task_type="observation_review",
-                    priority=5,
-                    parameters={"hypothesis_id": h.id},
-                    status="pending",
-                )
-                if first_task is None:
-                    first_task = task
-                else:
-                    self.task_queue.add_task(task)
-                queued += 1
-                if queued >= OBSERVATION_BATCH_CAP:
-                    break
-            if first_task is not None:
-                return first_task
+                previous = await self.storage.get_observation_review(hypothesis.id)
+                if previous and previous.observations_total_count > 0 and getattr(previous, "assessment_status", "complete") == "complete":
+                    continue
+                # Keep task/checkpoint parameters serializable; retrieve the graph
+                # from the generation agent at execution and export the observations.
+                return AgentTask(id=generate_task_id(), agent_type=agent_type,
+                    task_type="observation_review", priority=8,
+                    parameters={"hypothesis_id": hypothesis.id, "goal_id": goal_id}, status="pending")
+            return None
 
         return None
 
@@ -1117,7 +1387,10 @@ Respond with ONLY the JSON object."""
 
         if task.agent_type == AgentType.GENERATION:
             method = GenerationMethod(params.get("method", "literature_exploration"))
-            use_literature_expansion = params.get("use_web_search", False)
+            # Every generation task, not only the first: the retrieval is
+            # cached per goal by the GenerationAgent, and its citations' DOIs
+            # are checked only with it on.
+            use_literature_expansion = settings.enable_web_search
 
             # Fetch existing titles for deduplication (all methods)
             all_hyps = await self.storage.get_hypotheses_by_goal(research_goal.id)
@@ -1194,17 +1467,7 @@ Respond with ONLY the JSON object."""
             result = {"hypothesis_id": hypothesis.id}
 
             # Create follow-up reflection task (hypothesis passed safety)
-            self.task_queue.add_task(AgentTask(
-                id=generate_task_id(),
-                agent_type=AgentType.REFLECTION,
-                task_type="review_hypothesis",
-                priority=9,
-                parameters={
-                    "hypothesis_id": hypothesis.id,
-                    "review_type": ReviewType.INITIAL.value,
-                },
-                status="pending"
-            ))
+            await self._queue_review(hypothesis.id, ReviewType.INITIAL, priority=9)
 
         elif task.agent_type == AgentType.REFLECTION:
             hypothesis_id = params["hypothesis_id"]
@@ -1212,10 +1475,14 @@ Respond with ONLY the JSON object."""
             if hypothesis:
                 review_type = ReviewType(params.get("review_type", "initial"))
                 # ReflectionAgent.execute is async
+                evidence_review = await self.storage.get_observation_review(hypothesis.id)
+                evidence_context = (json.dumps(evidence_review.model_dump(mode="json"), ensure_ascii=False)
+                                    if evidence_review else "No retrieved-observation review is available.")
                 review = await agent.execute(
                     hypothesis=hypothesis,
                     review_type=review_type,
-                    context_guidance=self._format_context_for_prompt(),
+                    context_guidance=self._format_context_for_prompt(for_review=True)
+                                     + "\nRetrieved observation evidence:\n" + evidence_context,
                     research_goal=research_goal,
                 )
                 await self.storage.add_review(review)
@@ -1235,29 +1502,11 @@ Respond with ONLY the JSON object."""
                 # FULL passed -> queue DEEP_VERIFICATION
                 if review.passed:
                     if review_type == ReviewType.INITIAL:
-                        self.task_queue.add_task(AgentTask(
-                            id=generate_task_id(),
-                            agent_type=AgentType.REFLECTION,
-                            task_type="review_hypothesis",
-                            priority=9,  # parity with INITIAL so FULL doesn't starve
-                            parameters={
-                                "hypothesis_id": hypothesis.id,
-                                "review_type": ReviewType.FULL.value,
-                            },
-                            status="pending"
-                        ))
+                        # priority 9: parity with INITIAL so FULL doesn't starve
+                        await self._queue_review(hypothesis.id, ReviewType.FULL, priority=9)
                     elif review_type == ReviewType.FULL:
-                        self.task_queue.add_task(AgentTask(
-                            id=generate_task_id(),
-                            agent_type=AgentType.REFLECTION,
-                            task_type="deep_verification_review",
-                            priority=7,
-                            parameters={
-                                "hypothesis_id": hypothesis.id,
-                                "review_type": ReviewType.DEEP_VERIFICATION.value,
-                            },
-                            status="pending"
-                        ))
+                        await self._queue_review(hypothesis.id, ReviewType.DEEP_VERIFICATION,
+                                                 priority=10, task_type="deep_verification_review")
 
                 result = {"review_id": review.id, "passed": review.passed}
 
@@ -1346,6 +1595,9 @@ Respond with ONLY the JSON object."""
                         logger.warning("safety_review_skipped_evolved", error=str(e))
 
                 await self.storage.add_hypothesis(evolved)
+                # The child changed the idea: its parent's reviews do not
+                # cover it, and it may top the tournament
+                await self._queue_review(evolved.id, ReviewType.INITIAL, priority=9)
 
                 # Mark original as evolved
                 hypothesis.status = HypothesisStatus.EVOLVED
@@ -1389,30 +1641,24 @@ Respond with ONLY the JSON object."""
             # Also generate research overview so expansion method has data
             # (without this, get_research_overview returns None during iterations)
             try:
-                # B4: prefer reviewed hypotheses for the research overview so
-                # unreviewed Elo-1200 newcomers (esp. post-B1/B2 evolved
-                # children) don't dominate the top-5. Fall back to the full
-                # pool when fewer than 5 reviewed hyps exist (short runs).
-                top_hyps = await self.storage.get_top_hypotheses(
-                    n=5, goal_id=research_goal.id, require_reviews=True
-                )
-                if len(top_hyps) < 5:
-                    top_hyps = await self.storage.get_top_hypotheses(
-                        n=5, goal_id=research_goal.id
-                    )
+                top_hyps = await self._eligible_hypotheses(research_goal.id)
                 if top_hyps:
-                    overview = agent.generate_research_overview(
+                    overview = await asyncio.to_thread(agent.generate_research_overview,
                         goal=research_goal.description,
                         top_hypotheses=top_hyps,
                         meta_review=meta_review,
                         preferences=research_goal.preferences,
-                        research_goal_id=research_goal.id
+                        research_goal_id=research_goal.id,
+                        review_status=await self._review_status_by_hypothesis(
+                            research_goal.id),
                     )
                     if overview:
                         await self.storage.save_research_overview(overview)
                         logger.info("research_overview_generated_in_iteration",
                                     overview_id=overview.id,
                                     iteration=self.iteration)
+                else:
+                    await self._no_eligible_overview(research_goal)
             except Exception as e:
                 logger.warning("in_iteration_overview_failed", error=str(e)[:200])
 
@@ -1429,7 +1675,8 @@ Respond with ONLY the JSON object."""
 
                 # Get citation graph if available
                 # For now, create an empty graph - in production this would be passed from generation
-                citation_graph = params.get("citation_graph")
+                generator = self._agents.get(AgentType.GENERATION)
+                citation_graph = generator.literature_graph(research_goal.id) if generator else None
                 if not citation_graph:
                     # Try to get observation review without citation graph
                     # This will create an empty review with a warning
@@ -1449,7 +1696,8 @@ Respond with ONLY the JSON object."""
                 result = {
                     "observation_review_id": observation_review.id,
                     "overall_score": observation_review.overall_score,
-                    "explained_count": observation_review.observations_explained_count
+                    "explained_count": observation_review.observations_explained_count,
+                    "llm_used": bool(observation_review.explanations),
                 }
 
                 logger.info(
@@ -1482,20 +1730,21 @@ Respond with ONLY the JSON object."""
         Returns:
             Tuple of (should_stop, reason).
         """
-        # Budget exhaustion is the only unconditional terminator. Even when the
-        # time limit has elapsed, we must still finish pairing every hypothesis
-        # in at least one tournament match — otherwise the leaderboard above
-        # rank 1 is just a seeding artefact (observed in 4/5 runs of the
-        # 2026-05-04 batch). Budget is the hard ceiling that protects against
-        # an unmatched-hypothesis loop running forever.
+        # Neither budget exhaustion nor the absolute deadline may be overridden
+        # by incomplete tournament coverage. Missing work is reported explicitly.
         try:
             self.cost_tracker.check_budget()
         except BudgetExceededError:
             return True, "Budget exhausted"
 
-        # Block termination while any hypothesis has zero tournament matches.
-        # This gate now runs BEFORE the time-limit check so a curtailed
-        # tournament cannot terminate with unranked top-tier hypotheses.
+        # The absolute deadline takes precedence over ranking coverage.
+        elapsed_seconds = (datetime.now() - started_at).total_seconds()
+        if elapsed_seconds >= max_execution_time_seconds:
+            elapsed_hours = round(elapsed_seconds / 3600, 2)
+            max_hours = round(max_execution_time_seconds / 3600, 2)
+            return True, f"Maximum execution time exceeded ({elapsed_hours}h / {max_hours}h)"
+
+        # Before the deadline, allow the tournament to cover the candidate pool.
         all_matches = await self.storage.get_all_matches(stats.research_goal_id)
         hypotheses = await self.storage.get_hypotheses_by_goal(stats.research_goal_id)
         matched_ids = set()
@@ -1513,12 +1762,6 @@ Respond with ONLY the JSON object."""
                 over_time_limit=elapsed_seconds > max_execution_time_seconds,
             )
             return False, None
-
-        # Time limit applies only once every hypothesis has at least one match.
-        if elapsed_seconds > max_execution_time_seconds:
-            elapsed_hours = round(elapsed_seconds / 3600, 2)
-            max_hours = round(max_execution_time_seconds / 3600, 2)
-            return True, f"Maximum execution time exceeded ({elapsed_hours}h / {max_hours}h)"
 
         # Don't stop if not enough hypotheses
         if stats.total_hypotheses < min_hypotheses:
@@ -1542,6 +1785,59 @@ Respond with ONLY the JSON object."""
                 return True, f"Quality threshold met ({quality_threshold})"
 
         return False, None
+
+    def _stall_limit_reached(self) -> bool:
+        """Whether the stalled iterations so far end the loop (see
+        STALLED_ITERATIONS_LIMIT and TRANSIENT_STALL_MIN_SECONDS)."""
+        if self._stalled_iterations < STALLED_ITERATIONS_LIMIT:
+            return False
+        if not self._stall_transient:
+            return True
+        stalled_for = (datetime.now() - self._stall_started_at).total_seconds()
+        return stalled_for >= TRANSIENT_STALL_MIN_SECONDS
+
+    def _no_hypotheses_reason(self, terminal_reason: Optional[str]) -> str:
+        """User-facing reason for a run that produced no hypotheses.
+
+        Shown on the website's run page and in the failure email.
+        """
+        err = self._last_task_error
+        if isinstance(err, ContentFilteredError):
+            # Claude's filter is the strictest seen on Bedrock (Opus 5.5 blocked
+            # 6/6 generation prompts); Gemini does not run through Bedrock.
+            if (err.model or "").startswith("anthropic."):
+                alternatives = "the Google Gemini or OpenAI GPT-6 variant"
+            else:
+                alternatives = "the Google Gemini variant"
+            return (
+                f"No hypotheses were produced: Bedrock's content filter blocked "
+                f"the {err.agent or 'LLM'} prompt on {err.model or 'the selected model'}. "
+                f"Resubmit with {alternatives}, or rephrase the research goal."
+            )
+        reason = f"No hypotheses were produced ({terminal_reason or 'max iterations reached'})"
+        if err is None:
+            return reason + "."
+        return (
+            f"{reason}: {self._failure_cause(err)}. "
+            f"Last error: {type(err).__name__}: {str(err)[:300]}"
+        )
+
+    @staticmethod
+    def _failure_cause(err: Optional[Exception]) -> str:
+        """Plain-language cause of a failed task, for messages users read."""
+        if isinstance(err, ContentFilteredError):
+            return "Bedrock's content filter blocked the prompts"
+        if isinstance(err, LLMTimeoutError):
+            return "the LLM calls timed out"
+        if isinstance(err, RetryableError):
+            return "the LLM service was throttling or unavailable"
+        if isinstance(err, LLMClientError):
+            return "the LLM calls failed"
+        # Replies that do not parse surface as CoScientistError, JSON or schema
+        # errors (ValueError) and missing keys.
+        if isinstance(err, (CoScientistError, ValueError, KeyError)):
+            return "the model's replies could not be used"
+        return "a task failed"
 
     async def _save_checkpoint(
         self,
@@ -1638,6 +1934,46 @@ Respond with ONLY the JSON object."""
                     f"Retry error: {retry_error}"
                 ) from retry_error
 
+    async def _review_status_by_hypothesis(self, goal_id: str) -> Dict[str, str]:
+        """Each reviewed hypothesis's latest verdict per review type, e.g.
+        "initial review passed; full review failed". Unreviewed hypotheses
+        have no entry."""
+        latest: Dict[tuple, Any] = {}
+        for r in await self.storage.get_all_reviews(goal_id=goal_id):
+            key = (r.hypothesis_id, r.review_type)
+            if key not in latest or r.created_at > latest[key].created_at:
+                latest[key] = r
+        stages = list(ReviewType)
+        verdicts: Dict[str, list] = {}
+        for (hypothesis_id, review_type), r in sorted(
+                latest.items(), key=lambda item: stages.index(item[0][1])):
+            verdicts.setdefault(hypothesis_id, []).append(
+                f"{review_type.value.replace('_', ' ')} review "
+                f"{'passed' if r.passed else 'failed'}")
+        return {hypothesis_id: "; ".join(v) for hypothesis_id, v in verdicts.items()}
+
+    async def _eligible_hypotheses(self, goal_id: str, preferred=None):
+        hypotheses = await self.storage.get_hypotheses_by_goal(goal_id)
+        readiness = assess_readiness(hypotheses,
+            await self.storage.get_all_reviews(goal_id=goal_id),
+            await self.storage.get_observation_reviews_by_goal(goal_id))
+        ordered, seen = [], set()
+        for hypothesis in list(preferred or []) + hypotheses:
+            if hypothesis.id not in seen and readiness.get(hypothesis.id, {}).get("eligible"):
+                ordered.append(hypothesis)
+                seen.add(hypothesis.id)
+        return ordered[:5]
+
+    async def _no_eligible_overview(self, research_goal):
+        overview = ResearchOverview(id=generate_id("overview"), research_goal_id=research_goal.id,
+            executive_summary="No hypothesis is ready to recommend under the current scientific-review checks. "
+                              "The report retains the ideas and their failed or missing checks for further work.",
+            current_knowledge_boundary="Elo is a relative preference, not evidence of correctness. "
+                                       "Resolve the missing reviews, evidence or citation checks before selecting an experiment.",
+            research_directions=[], top_hypotheses_summary=[])
+        await self.storage.save_research_overview(overview)
+        return overview
+
     async def _generate_final_overview(
         self,
         research_goal: ResearchGoal
@@ -1651,6 +1987,15 @@ Respond with ONLY the JSON object."""
             ResearchOverview or None if generation fails.
         """
         try:
+            # From here the whole budget may be spent: the iteration loop
+            # stopped short of it by the finalization reserve.
+            # Earlier recommendations may have been invalidated by later reviews.
+            await self.storage.clear_research_overview(research_goal.id)
+            self.cost_tracker.begin_finalization()
+            # With the budget already spent the overview (and a missing
+            # meta-review) would be refused before any call is made.
+            self.cost_tracker.check_budget()
+
             agent = self._get_agent(AgentType.META_REVIEW)
             if not agent:
                 return None
@@ -1658,21 +2003,26 @@ Respond with ONLY the JSON object."""
             # Get top hypotheses (use diversity sampling if enabled)
             from src.config import settings
             if settings.diversity_sampling_for_overview:
-                top_hypotheses = await self.storage.get_diverse_hypotheses(
+                candidates = await self.storage.get_diverse_hypotheses(
                     goal_id=research_goal.id,
-                    n=5,
+                    n=10,
                     min_elo_rating=settings.diversity_sampling_min_elo,
                     cluster_balance=True
                 )
-                logger.info(
-                    "supervisor_final_overview_diverse_sampling",
-                    goal_id=research_goal.id,
-                    num_hypotheses=len(top_hypotheses)
-                )
             else:
-                top_hypotheses = await self.storage.get_top_hypotheses(
-                    n=5, goal_id=research_goal.id
+                candidates = await self.storage.get_top_hypotheses(
+                    n=10, goal_id=research_goal.id
                 )
+            review_status = await self._review_status_by_hypothesis(research_goal.id)
+            top_hypotheses = await self._eligible_hypotheses(research_goal.id, candidates)
+            if not top_hypotheses:
+                return await self._no_eligible_overview(research_goal)
+            logger.info(
+                "supervisor_final_overview_hypotheses",
+                goal_id=research_goal.id,
+                num_hypotheses=len(top_hypotheses),
+                unreviewed=sum(h.id not in review_status for h in top_hypotheses),
+            )
 
             # Get or generate meta-review
             meta_review = await self.storage.get_meta_review(research_goal.id)
@@ -1698,12 +2048,26 @@ Respond with ONLY the JSON object."""
                 top_hypotheses=top_hypotheses,
                 meta_review=meta_review,
                 preferences=research_goal.preferences,
-                research_goal_id=research_goal.id
+                research_goal_id=research_goal.id,
+                review_status=review_status,
             )
             for attempt in range(2):
                 try:
                     overview = await asyncio.to_thread(
                         agent.generate_research_overview, **overview_kwargs
+                    )
+                    break
+                except (ContentFilteredError, LLMTimeoutError, BudgetExceededError, RunTimeLimitError) as e:
+                    # Not retried: the filter is deterministic for the prompt;
+                    # a timed-out call already used 1 + llm_max_retries attempts
+                    # of up to llm_timeout_seconds each; and BudgetExceededError
+                    # is raised after the call returns, so each retry would be
+                    # billed and then discarded.
+                    # Throttling and other errors keep the retry below.
+                    logger.error(
+                        "overview_generation_failed_final",
+                        error=str(e)[:200],
+                        error_type=type(e).__name__,
                     )
                     break
                 except Exception as e:

@@ -49,6 +49,13 @@ class ProximityAgent(BaseAgent):
         # Cache embeddings to avoid regenerating
         self._embedding_cache: Dict[str, List[float]] = {}
 
+        # A hypothesis's text never changes (evolution makes a new one), so a
+        # pair's LLM similarity and shared themes are asked for once per run:
+        # each graph rebuild used to re-ask all 45 pairs of the top 10, the
+        # bulk of the run's model calls. Failed calls are not cached.
+        self._similarity_cache: Dict[Tuple[str, str], float] = {}
+        self._themes_cache: Dict[Tuple[str, str], List[str]] = {}
+
     @trace_agent("ProximityAgent")
     def execute(
         self,
@@ -254,6 +261,9 @@ class ProximityAgent(BaseAgent):
         This is the fallback method when vector embeddings are not available.
         More nuanced but slower than vector-based similarity.
         """
+        pair = tuple(sorted((hyp_a.id, hyp_b.id)))
+        if pair in self._similarity_cache:
+            return self._similarity_cache[pair]
 
         prompt = f"""Compare the similarity of these two scientific hypotheses on a scale of 0.0 to 1.0.
 
@@ -291,7 +301,9 @@ Return ONLY a JSON object:
                 json_str = response.strip()
 
             data = json.loads(json_str)
-            return float(data["similarity_score"])
+            similarity = float(data["similarity_score"])
+            self._similarity_cache[pair] = similarity
+            return similarity
 
         except Exception as e:
             self.logger.warning(
@@ -308,6 +320,9 @@ Return ONLY a JSON object:
         hyp_b: Hypothesis
     ) -> List[str]:
         """Extract common themes between hypotheses"""
+        pair = tuple(sorted((hyp_a.id, hyp_b.id)))
+        if pair in self._themes_cache:
+            return self._themes_cache[pair]
 
         prompt = f"""Identify common themes between these two hypotheses.
 
@@ -336,7 +351,9 @@ Limit to 3-5 most important themes."""
                 json_str = response.strip()
 
             data = json.loads(json_str)
-            return data.get("common_themes", [])
+            themes = data.get("common_themes", [])
+            self._themes_cache[pair] = themes
+            return themes
 
         except Exception as e:
             self.logger.warning(

@@ -37,6 +37,7 @@ from collections import Counter
 from html import escape
 from pathlib import Path
 from typing import Optional
+from src.scientific_readiness import assess_readiness
 
 
 _MODULE_DIR = Path(__file__).resolve().parent
@@ -134,6 +135,10 @@ def _derive_themes_via_llm(hypotheses: list, goal_text: str) -> Optional[dict]:
 
     try:
         client = get_llm_client(model=settings.meta_review_model, agent_name="meta_review")
+        # Past the budget the call would be billed and then refused
+        tracker = getattr(client, "cost_tracker", None)
+        if tracker is not None and tracker.total_cost_aud >= tracker.budget_aud:
+            return None
         response = client.invoke(prompt)
         import re
         match = re.search(r"\{.*\}", response, re.DOTALL)
@@ -158,6 +163,43 @@ def _derive_themes_via_llm(hypotheses: list, goal_text: str) -> Optional[dict]:
         return None
 
 
+_REVIEW_DEPTH = ["initial", "observation", "full", "simulation", "deep_verification"]
+
+
+def _review_verdict(reviews: list) -> str:
+    """A hypothesis's review state: the deepest stage's newest verdict, e.g.
+    "full review failed", or "unreviewed"."""
+    if not reviews:
+        return "unreviewed"
+    def depth(r):
+        stage = r.get("review_type", "")
+        return _REVIEW_DEPTH.index(stage) if stage in _REVIEW_DEPTH else -1
+    deepest = max(reviews, key=lambda r: (depth(r), str(r.get("created_at") or "")))
+    stage = (deepest.get("review_type") or "").replace("_", " ") or "a"
+    return f"{stage} review {'passed' if deepest.get('passed') else 'failed'}"
+
+
+def _overview_html(overview: Optional[dict]) -> str:
+    """The run's research overview as a report section; it says so when the
+    run produced none."""
+    if not overview:
+        return ('<section class="overview"><h3>Research overview</h3>'
+                '<p class="none">No research overview was produced for this run.</p></section>')
+    parts = ['<section class="overview"><h3>Research overview</h3>']
+    if overview.get("executive_summary"):
+        parts.append(f'<div class="body">{escape(overview["executive_summary"])}</div>')
+    if overview.get("current_knowledge_boundary"):
+        parts.append('<h4>Knowledge boundary</h4>'
+                     f'<div class="body">{escape(overview["current_knowledge_boundary"])}</div>')
+    directions = [d for d in overview.get("research_directions") or [] if isinstance(d, dict)]
+    if directions:
+        parts.append("<h4>Research directions</h4><ul>" + "".join(
+            f"<li><strong>{escape(str(d.get('name', '')))}</strong>: "
+            f"{escape(str(d.get('description', '')))}</li>" for d in directions) + "</ul>")
+    parts.append("</section>")
+    return "".join(parts)
+
+
 def _prepare_data(run_json_path: Path) -> dict:
     """Read a run JSON and return a dict of templating-ready fields."""
     with open(run_json_path) as f:
@@ -167,7 +209,10 @@ def _prepare_data(run_json_path: Path) -> dict:
     reviews = data.get("reviews", [])
     matches = data.get("matches", [])
     goal = data.get("goal", {})
-    context_memory = data.get("context_memory", {})
+    context_memory = data.get("context_memory") or {}
+    observation_reviews = data.get("observation_reviews") or []
+    observation_map = {review["hypothesis_id"]: review for review in observation_reviews}
+    readiness = assess_readiness(hypotheses, reviews, observation_reviews)
 
     review_map: dict[str, list] = {}
     for r in reviews:
@@ -186,7 +231,8 @@ def _prepare_data(run_json_path: Path) -> dict:
         goal.get("description") or goal.get("text") or goal.get("goal") or ""
         if isinstance(goal, dict) else str(goal)
     )
-    theme_overrides = _derive_themes_via_llm(hypotheses, goal_text) or {}
+    theme_overrides = ({} if data.get("execution_status") == "failed"
+                       else (_derive_themes_via_llm(hypotheses, goal_text) or {}))
 
     hyp_cards = []
     for h in hypotheses:
@@ -218,8 +264,12 @@ def _prepare_data(run_json_path: Path) -> dict:
                 "estimated_timeline": proto.get("estimated_timeline", ""),
             },
             "citations": h.get("literature_citations", []),
+            "review_verdict": _review_verdict(revs),
+            "readiness": readiness[h["id"]],
+            "observation_review": observation_map.get(h["id"]),
             "reviews": [{
                 "type": r.get("review_type", ""),
+                "passed": r.get("passed"),
                 "quality": r.get("quality_score"),
                 "novelty": r.get("novelty_score"),
                 "feasibility": r.get("feasibility_score"),
@@ -237,10 +287,12 @@ def _prepare_data(run_json_path: Path) -> dict:
     # B4 fix: demote unreviewed hypotheses to the bottom of the leaderboard,
     # then sort by Elo desc within each group. Unreviewed cards (len==0) sort
     # AFTER reviewed cards (len>0) because False < True in Python.
-    hyp_cards.sort(key=lambda x: (len(x["reviews"]) == 0, -x["elo"]))
+    hyp_cards.sort(key=lambda x: (not x["readiness"]["eligible"], len(x["reviews"]) == 0, -x["elo"]))
 
     return {
         "goal": goal,
+        "warning": data.get("warning"),
+        "overview": data.get("research_overview"),
         "run_timestamp": data.get("run_timestamp", ""),
         "total_hyps": len(hypotheses),
         "total_reviews": len(reviews),
@@ -306,6 +358,11 @@ function filterCards() {
 function sortCards() {
   const by = document.getElementById('sortBy').value;
   currentData.sort((a, b) => {
+    const readiness = Number(!a.readiness.eligible) - Number(!b.readiness.eligible);
+    if (readiness) return readiness;
+    // Reviewed hypotheses before unreviewed ones under every sort, as on load
+    const unreviewed = (a.reviews.length === 0) - (b.reviews.length === 0);
+    if (unreviewed) return unreviewed;
     if (by === 'elo') return b.elo - a.elo;
     if (by === 'wins') return b.wins - a.wins;
     if (by === 'quality') return (avgScore(b.reviews,'quality')||0) - (avgScore(a.reviews,'quality')||0);
@@ -313,6 +370,20 @@ function sortCards() {
     return 0;
   });
   renderAll();
+}
+const CITE_CHECK = {
+  verified: 'DOI checked', title_mismatch: 'DOI is a different paper',
+  unresolved: 'DOI not found', lookup_failed: 'DOI check failed',
+  no_identifier: 'no DOI', not_checked: 'DOI not checked'
+};
+function citeHtml(c, i) {
+  const status = c.verification_status || 'not_checked';
+  const label = esc((c.title || c.doi || '').slice(0, 80));
+  const doi = String(c.doi || '').trim().replace(/^https?:\/\/(dx\.)?doi\.org\//i, '').replace(/^doi:\s*/i, '');
+  const name = doi ? '<a href="https://doi.org/' + encodeURI(doi) + '" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">' + label + '</a>' : label;
+  const actual = status === 'title_mismatch' && c.canonical_title ? ': ' + esc(c.canonical_title.slice(0, 80)) : '';
+  return '<span class="cite ' + (CITE_CHECK[status] ? status : 'not_checked') + '">[' + (i + 1) + '] ' + name +
+    ' <em>(' + esc(CITE_CHECK[status] || CITE_CHECK.not_checked) + actual + ')</em></span>';
 }
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 function nl2br(s){ return esc(s).replace(/\n/g, '<br>'); }
@@ -322,10 +393,21 @@ function nl2br(s){ return esc(s).replace(/\n/g, '<br>'); }
 # ---------------------------------------------------------------------------
 # HTML renderer
 # ---------------------------------------------------------------------------
+def _script_json(value) -> str:
+    """JSON for the inline <script>. Model-written text could otherwise end the
+    script ("</script>") or derail the HTML parser ("<!-- <script>"); the
+    \\u escapes read as the same characters to JavaScript and JSON."""
+    return (json.dumps(value, default=str)
+            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+
+
 def _render_html(p: dict) -> str:
     goal = p["goal"]
     goal_desc = escape(goal.get("description", ""))
     timestamp = escape(p["run_timestamp"])
+    warning_html = (
+        f'<div class="run-warning">{escape(p["warning"])}</div>' if p.get("warning") else ""
+    )
     logo_uri = _logo_data_uri(target_height_px=96)
 
     # Brand row: include the <img> only when we actually have a logo; degrade
@@ -344,11 +426,11 @@ def _render_html(p: dict) -> str:
         )
 
     data_js = (
-        f"const DATA = {json.dumps(p['hyp_cards'], default=str)};\n"
-        f"const THEMES = {json.dumps(p['theme_counts'])};\n"
-        f"const METHODS = {json.dumps(p['method_counts'])};\n"
-        f"const STATUSES = {json.dumps(p['status_counts'])};\n"
-        f"const INSIGHTS = {json.dumps(p['insights'])};\n"
+        f"const DATA = {_script_json(p['hyp_cards'])};\n"
+        f"const THEMES = {_script_json(p['theme_counts'])};\n"
+        f"const METHODS = {_script_json(p['method_counts'])};\n"
+        f"const STATUSES = {_script_json(p['status_counts'])};\n"
+        f"const INSIGHTS = {_script_json(p['insights'])};\n"
     )
     strongest_theme = (
         max(p["theme_counts"], key=p["theme_counts"].get) if p["theme_counts"] else "—"
@@ -422,6 +504,10 @@ button, input, select {{ font: inherit; color: inherit; }}
 }}
 .hero .meta {{ margin-top: 24px; display: flex; gap: 20px; flex-wrap: wrap; font-size: 12px; color: var(--ink-dim); }}
 .hero .meta strong {{ color: var(--ink); font-weight: 600; }}
+.hero .run-warning {{
+  margin-top: 16px; padding: 10px 14px; border-left: 3px solid var(--peach);
+  background: var(--surface-2); border-radius: 8px; font-size: 13px; color: var(--ink-2);
+}}
 .hero-stats {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
 .stat-tile {{ background: var(--surface-2); border-radius: 14px; padding: 18px; border: 1px solid var(--line-soft); }}
 .stat-tile .l {{ font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); }}
@@ -520,6 +606,21 @@ button, input, select {{ font: inherit; color: inherit; }}
 .review-tile .sc strong {{ color: var(--ink); margin-left: 4px; }}
 .review-tile .sub {{ font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-dim); margin: 6px 0 3px; font-weight: 600; }}
 .review-tile ul {{ padding-left: 16px; font-size: 12px; color: var(--ink-2); }}
+.review-tile.failed {{ border-left-color: var(--peach); }}
+.review-tile .rat {{ font-size: 12px; color: var(--ink-2); line-height: 1.5; }}
+.bh .b.verdict.passed {{ background: var(--green-50); color: oklch(0.4 0.12 115); }}
+.bh .b.verdict.failed, .bh .b.verdict.unreviewed {{ background: oklch(0.95 0.03 20); color: oklch(0.5 0.15 20); }}
+.cite a {{ color: inherit; }}
+.cite em {{ font-style: normal; color: var(--ink-dim); }}
+.cite.title_mismatch, .cite.unresolved {{ border-color: var(--peach); }}
+.cite-note, .elo-note {{ font-size: 11px; color: var(--ink-dim); margin-top: 6px; }}
+.elo-note {{ margin: -6px 0 14px; }}
+.overview {{ background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 22px 26px; margin-bottom: 28px; }}
+.overview h3 {{ font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; margin-bottom: 10px; }}
+.overview h4 {{ font-size: 12px; font-weight: 600; margin: 14px 0 6px; }}
+.overview .body {{ font-size: 14px; line-height: 1.6; white-space: pre-wrap; }}
+.overview ul {{ padding-left: 18px; font-size: 14px; }}
+.overview .none {{ font-size: 14px; color: var(--ink-dim); }}
 
 .insights {{ background: var(--navy); color: white; border-radius: var(--r); padding: 26px 28px; margin-top: 18px; }}
 .insights h3 {{ font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--green); margin-bottom: 12px; font-weight: 600; }}
@@ -557,6 +658,7 @@ button, input, select {{ font: inherit; color: inherit; }}
       <span><strong>{p['total_reviews']}</strong> structured reviews</span>
       <span><strong>{p['total_matches']}</strong> tournament matches</span>
     </div>
+    {warning_html}
   </div>
   <div class="hero-stats">
     <div class="stat-tile teal"><div class="l">Top Elo</div><div class="v">{p['elo_max']:.0f}</div></div>
@@ -577,10 +679,12 @@ button, input, select {{ font: inherit; color: inherit; }}
   <div class="bcard span-2"><h3>Methods</h3><div id="chart-methods" style="flex:1;min-height:140px"></div></div>
   <div class="bcard green">
     <h3>Strongest theme</h3>
-    <div class="big" style="font-size:22px;font-family:var(--sans);font-weight:700;letter-spacing:-0.01em;">{strongest_theme}</div>
+    <div class="big" style="font-size:22px;font-family:var(--sans);font-weight:700;letter-spacing:-0.01em;">{escape(strongest_theme)}</div>
     <div class="note">{strongest_count} hypotheses</div>
   </div>
 </div>
+
+{_overview_html(p.get("overview"))}
 
 <div class="controls">
   <input type="text" id="search" placeholder="Search hypotheses..." oninput="filterCards()">
@@ -594,6 +698,7 @@ button, input, select {{ font: inherit; color: inherit; }}
     <option value="wins">Sort: Wins</option>
   </select>
 </div>
+<p class="elo-note">Elo ranks hypotheses by pairwise model preference: it is not the probability that a hypothesis is correct. Reviewed hypotheses come first under every sort; an unreviewed one has not been assessed.</p>
 
 <div id="cards-container"></div>
 
@@ -630,17 +735,33 @@ function renderCard(h, rank) {{
     ['Timeline', proto.estimated_timeline],
   ].filter(([_, v]) => v);
 
-  const reviewsHtml = h.reviews.map(r => `<div class="review-tile">
+  const reviewsHtml = h.reviews.map(r => `<div class="review-tile ${{r.passed === false ? 'failed' : ''}}">
     <div class="sc">
+      <span>Verdict<strong>${{r.passed === true ? 'passed' : r.passed === false ? 'failed' : '–'}}</strong></span>
       <span>Quality<strong>${{r.quality ?? '–'}}</strong></span>
       <span>Novelty<strong>${{r.novelty ?? '–'}}</strong></span>
       <span>Feasibility<strong>${{r.feasibility ?? '–'}}</strong></span>
       <span>Type<strong>${{esc(r.type)}}</strong></span>
     </div>
+    ${{r.rationale ? `<div class="sub">Rationale</div><div class="rat">${{nl2br(r.rationale)}}</div>` : ''}}
     ${{r.strengths.length ? `<div class="sub">Strengths</div><ul>${{r.strengths.map(s=>'<li>'+esc(s)+'</li>').join('')}}</ul>` : ''}}
     ${{r.weaknesses.length ? `<div class="sub">Weaknesses</div><ul>${{r.weaknesses.map(s=>'<li>'+esc(s)+'</li>').join('')}}</ul>` : ''}}
     ${{r.suggestions.length ? `<div class="sub">Suggestions</div><ul>${{r.suggestions.map(s=>'<li>'+esc(s)+'</li>').join('')}}</ul>` : ''}}
   </div>`).join('');
+
+  const observed = h.observation_review;
+  const evidenceHtml = observed && observed.observations.length ?
+    observed.observations.map(o => {{
+      const explanation = observed.explanations.find(e => e.observation_id === o.id);
+      const source = String(o.paper_id || '');
+      const href = source.startsWith('10.') ? 'https://doi.org/' + encodeURIComponent(source) :
+        /^\\d+$/.test(source) ? 'https://pubmed.ncbi.nlm.nih.gov/' + source + '/' : '';
+      return `<details><summary>${{esc(o.paper_title)}}</summary>
+        ${{href ? `<a href="${{href}}" target="_blank" rel="noopener noreferrer">Open source</a>` : ''}}
+        <div class="sub">Retrieved abstract context</div><div class="body">${{nl2br(o.context)}}</div>
+        ${{explanation ? `<div class="sub">Reviewer reasoning</div><div class="body">${{nl2br(explanation.reasoning)}}</div>` : ''}}
+      </details>`;
+    }}).join('') : '<p>No retrieved-observation review is available.</p>';
 
   return `<article class="bh ${{size}}" onclick="this.classList.toggle('open')">
     <div class="badge-line">
@@ -648,6 +769,7 @@ function renderCard(h, rank) {{
       <span class="b theme">${{esc(h.theme)}}</span>
       <span class="b method">${{esc(h.method.replace(/_/g, ' '))}}</span>
       <span class="b status">${{esc(h.status.replace(/_/g, ' '))}}</span>
+      <span class="b verdict ${{h.readiness.eligible ? 'passed' : h.readiness.status === 'failed' ? 'failed' : 'unreviewed'}}" aria-label="Scientific readiness">${{h.readiness.eligible ? 'Ready for consideration' : 'Scientific review incomplete'}}</span>
       <span class="elo ${{eloClass(h.elo)}}">${{h.elo.toFixed(0)}}</span>
     </div>
     <h2>${{esc(h.title)}}</h2>
@@ -663,10 +785,14 @@ function renderCard(h, rank) {{
       ${{protoFields.length ? `<div class="sect"><h4>Experimental protocol</h4>
         <div class="proto-grid">${{protoFields.map(([k,v]) => `<div class="f"><div class="k">${{k}}</div><div class="v">${{nl2br(v)}}</div></div>`).join('')}}</div></div>` : ''}}
       ${{h.citations.length ? `<div class="sect"><h4>Citations</h4><div class="cites">${{
-        h.citations.map((c,i) => '<span class="cite">[' + (i+1) + '] ' + esc((c.title||c.doi||'').slice(0,80)) + '</span>').join('')
-      }}</div></div>` : ''}}
+        h.citations.map(citeHtml).join('')
+      }}</div><div class="cite-note">The DOI check compares each DOI with the paper it resolves to; it does not show that the paper supports the claim.</div></div>` : ''}}
       ${{h.parent_ids.length ? `<div class="sect"><h4>Evolved from</h4><div class="body" style="font-family:var(--mono);font-size:11px;color:var(--ink-dim)">${{h.parent_ids.map(esc).join(', ')}}</div></div>` : ''}}
       ${{reviewsHtml ? `<div class="sect"><h4>Reviews (${{h.reviews.length}})</h4>${{reviewsHtml}}</div>` : ''}}
+      <section class="sect" aria-label="Retrieved evidence"><h4>Retrieved evidence</h4>
+        <p class="cite-note">These are retrieved abstracts and model-written assessments. Experimental validation remains separate.</p>
+        ${{evidenceHtml}}</section>
+      ${{h.readiness.issues.length ? `<div class="sect"><h4>Checks still needed</h4><ul>${{h.readiness.issues.map(i=>'<li>'+esc(i)+'</li>').join('')}}</ul></div>` : ''}}
     </div></div></div>
   </article>`;
 }}

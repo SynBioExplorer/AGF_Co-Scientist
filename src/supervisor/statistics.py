@@ -38,6 +38,21 @@ import structlog
 
 logger = structlog.get_logger()
 
+# Each agent type's share of an iteration's task slots, before the per-
+# iteration adjustments of recommend_agent_weights; also the supervisor's
+# starting weights. B16 rebalance: generation 0.25 -> 0.15 and ranking
+# 0.20 -> 0.30, so reviews and matches keep up with the pool (a copy of the
+# old values here undid it from the second iteration on).
+BASE_AGENT_WEIGHTS: Dict[AgentType, float] = {
+    AgentType.GENERATION: 0.15,
+    AgentType.REFLECTION: 0.25,
+    AgentType.RANKING: 0.30,
+    AgentType.EVOLUTION: 0.13,
+    AgentType.OBSERVATION_REVIEW: 0.08,
+    AgentType.PROXIMITY: 0.05,
+    AgentType.META_REVIEW: 0.04,
+}
+
 
 class SupervisorStatistics:
     """Compute system statistics for resource allocation and convergence.
@@ -423,16 +438,7 @@ class SupervisorStatistics:
         Returns:
             Recommended weights per agent type (sum to ~1.0).
         """
-        # Base weights - MUST match SupervisorAgent._initialize_weights
-        base: Dict[AgentType, float] = {
-            AgentType.GENERATION: 0.25,
-            AgentType.REFLECTION: 0.25,
-            AgentType.RANKING: 0.20,
-            AgentType.EVOLUTION: 0.13,
-            AgentType.OBSERVATION_REVIEW: 0.08,
-            AgentType.PROXIMITY: 0.05,
-            AgentType.META_REVIEW: 0.04,
-        }
+        base: Dict[AgentType, float] = BASE_AGENT_WEIGHTS
 
         weights: Dict[AgentType, float] = dict(base)
 

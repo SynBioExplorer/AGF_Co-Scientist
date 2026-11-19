@@ -37,6 +37,11 @@ class SemanticScholarPaper(BaseModel):
     url: str = Field("", description="Semantic Scholar URL")
 
 
+class PaperNotFoundError(CoScientistError):
+    """Semantic Scholar has no paper for the ID (HTTP 404), as opposed to a
+    lookup that failed."""
+
+
 class SemanticScholarTool(BaseTool):
     """
     Semantic Scholar citation network tool.
@@ -61,8 +66,11 @@ class SemanticScholarTool(BaseTool):
         self.api_key = api_key
         self.base_url = "https://api.semanticscholar.org/graph/v1"
 
-        # Rate limiting
-        self.requests_per_second = 100 if self.api_key else 10  # Conservative limits
+        # Rate limiting — Semantic Scholar's free tier (with or without an API
+        # key) is 1 request/sec steady-state. Earlier code assumed 100 r/s with
+        # a key, which would 429-storm the API. Bump only if AGF upgrades to a
+        # paid tier with a confirmed higher rate.
+        self.requests_per_second = 1.0
         self.min_request_interval = 1.0 / self.requests_per_second
         self.last_request_time = 0.0
 
@@ -94,15 +102,13 @@ class SemanticScholarTool(BaseTool):
         return "cross_disciplinary"
 
     async def _rate_limit(self):
-        """Enforce rate limiting"""
-        current_time = time.time()
-        time_since_last = current_time - self.last_request_time
-
-        if time_since_last < self.min_request_interval:
-            wait_time = self.min_request_interval - time_since_last
-            await asyncio.sleep(wait_time)
-
-        self.last_request_time = time.time()
+        """Enforce rate limiting. Each caller reserves its own slot before it
+        sleeps, so concurrent callers queue up instead of all passing at once."""
+        now = time.time()
+        slot = max(now, self.last_request_time + self.min_request_interval)
+        self.last_request_time = slot
+        if slot > now:
+            await asyncio.sleep(slot - now)
 
     def _get_headers(self) -> Dict[str, str]:
         """Get request headers with optional API key"""
@@ -198,7 +204,7 @@ class SemanticScholarTool(BaseTool):
                 data = response.json()
 
             papers = []
-            for paper_data in data.get("data", []):
+            for paper_data in data.get("data") or []:
                 try:
                     paper = self._parse_paper(paper_data)
                     papers.append(paper)
@@ -265,7 +271,7 @@ class SemanticScholarTool(BaseTool):
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
-                raise CoScientistError(f"Paper not found: {paper_id}")
+                raise PaperNotFoundError(f"Paper not found: {paper_id}")
             if e.response.status_code == 429:
                 raise CoScientistError("Semantic Scholar rate limit exceeded")
             raise CoScientistError(f"Failed to fetch paper: {e}")
@@ -311,7 +317,7 @@ class SemanticScholarTool(BaseTool):
                 data = response.json()
 
             papers = []
-            for citation_data in data.get("data", []):
+            for citation_data in data.get("data") or []:
                 try:
                     # Citations come wrapped in {"citingPaper": {...}}
                     paper_data = citation_data.get("citingPaper", {})
@@ -377,7 +383,8 @@ class SemanticScholarTool(BaseTool):
                 data = response.json()
 
             papers = []
-            for reference_data in data.get("data", []):
+            # "data" is null when the publisher has the reference list elided
+            for reference_data in data.get("data") or []:
                 try:
                     # References come wrapped in {"citedPaper": {...}}
                     paper_data = reference_data.get("citedPaper", {})
@@ -468,11 +475,19 @@ class SemanticScholarTool(BaseTool):
 
 # Auto-register the tool
 def register_semantic_scholar_tool():
-    """Register Semantic Scholar tool in the global registry"""
+    """Register Semantic Scholar tool in the global registry.
+
+    Reads the API key from settings.semantic_scholar_api_key (env var
+    SEMANTIC_SCHOLAR_API_KEY, mapped from Secrets Manager via the ECS task
+    definition). Falls back to anonymous mode if the field is None — same
+    1 r/s rate either way; the key just gives us a dedicated lane.
+    """
     from src.tools.registry import registry
+    from src.config import settings
     try:
-        semantic_tool = SemanticScholarTool()
+        semantic_tool = SemanticScholarTool(api_key=settings.semantic_scholar_api_key)
         registry.register(semantic_tool)
-        logger.info("Semantic Scholar tool auto-registered")
+        mode = "authenticated" if settings.semantic_scholar_api_key else "anonymous"
+        logger.info("Semantic Scholar tool auto-registered", mode=mode)
     except Exception as e:
         logger.warning("Failed to auto-register Semantic Scholar tool", error=str(e))

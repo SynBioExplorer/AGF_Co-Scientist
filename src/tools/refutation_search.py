@@ -165,10 +165,10 @@ class RefutationSearchTool(BaseTool):
 
         abstract_lower = abstract.lower()
 
-        # Check for contradiction keywords
+        # Whole words only: as substrings "not" matched "another" and "notably".
         contradiction_count = sum(
             1 for keyword in CONTRADICTION_KEYWORDS
-            if keyword in abstract_lower
+            if re.search(rf"\b{re.escape(keyword)}\b", abstract_lower)
         )
 
         # Require at least 2 contradiction keywords to reduce false positives
@@ -177,17 +177,22 @@ class RefutationSearchTool(BaseTool):
     async def search_contradictions(
         self,
         hypothesis_statement: str,
-        core_claim: str
-    ) -> List[Dict[str, Any]]:
+        core_claim: str,
+        return_status: bool = False,
+    ):
         """
         Search for papers that contradict the hypothesis.
 
         Args:
             hypothesis_statement: Full hypothesis text
             core_claim: Extracted core claim to negate
+            return_status: Also return what was searched
 
         Returns:
-            List of paper dictionaries representing contradictory papers
+            List of paper dictionaries representing contradictory papers; with
+            return_status, a tuple of that list and a dict with "attempted"
+            (searches sent), "failed" (searches that raised or returned an
+            error) and "queries" (the queries of the searches that worked).
         """
         logger.info(
             "Searching for contradictions",
@@ -196,48 +201,43 @@ class RefutationSearchTool(BaseTool):
         )
 
         contradictions = []
+        status = {"attempted": 0, "failed": 0, "queries": []}
 
         # Generate negation queries
         queries = self.generate_negation_queries(core_claim)
 
-        # Search using available tools
-        if self.semantic_scholar_tool:
+        # Search using available tools. A search that fails is counted, so a
+        # caller can tell "nothing found" from "could not search".
+        for source, tool in (("semantic_scholar", self.semantic_scholar_tool),
+                             ("pubmed", self.pubmed_tool)):
+            if not tool:
+                continue
             for query in queries[:3]:  # Limit to avoid rate limits
+                status["attempted"] += 1
                 try:
-                    result = await self.semantic_scholar_tool.execute(
+                    result = await tool.execute(
                         query,
                         max_results=self.max_results // 3
                     )
-
-                    if result.success:
-                        for paper in result.data:
-                            abstract = paper.get('abstract', '')
-                            if self._is_contradiction(abstract, core_claim):
-                                paper['contradiction_source'] = 'semantic_scholar'
-                                paper['query_used'] = query
-                                contradictions.append(paper)
-
+                    if not result.success:
+                        status["failed"] += 1
+                        logger.warning("Contradiction search failed", source=source,
+                                       error=result.error)
+                        continue
+                    found = []
+                    for paper in result.data:
+                        abstract = paper.get('abstract', '')
+                        if self._is_contradiction(abstract, core_claim):
+                            paper['contradiction_source'] = source
+                            paper['query_used'] = query
+                            found.append(paper)
                 except Exception as e:
-                    logger.warning("Semantic Scholar search failed", error=str(e))
-
-        if self.pubmed_tool:
-            for query in queries[:3]:
-                try:
-                    result = await self.pubmed_tool.execute(
-                        query,
-                        max_results=self.max_results // 3
-                    )
-
-                    if result.success:
-                        for paper in result.data:
-                            abstract = paper.get('abstract', '')
-                            if self._is_contradiction(abstract, core_claim):
-                                paper['contradiction_source'] = 'pubmed'
-                                paper['query_used'] = query
-                                contradictions.append(paper)
-
-                except Exception as e:
-                    logger.warning("PubMed search failed", error=str(e))
+                    status["failed"] += 1
+                    logger.warning("Contradiction search failed", source=source, error=str(e))
+                    continue
+                contradictions.extend(found)
+                if query not in status["queries"]:
+                    status["queries"].append(query)
 
         # Deduplicate by DOI/PMID
         seen = set()
@@ -250,9 +250,13 @@ class RefutationSearchTool(BaseTool):
 
         logger.info(
             "Contradiction search complete",
-            total_found=len(unique_contradictions)
+            total_found=len(unique_contradictions),
+            searches_failed=status["failed"],
+            searches_attempted=status["attempted"],
         )
 
+        if return_status:
+            return unique_contradictions[:self.max_results], status
         return unique_contradictions[:self.max_results]
 
     async def search_failed_replications(
@@ -324,88 +328,71 @@ class RefutationSearchTool(BaseTool):
         paper: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Check PubMed for retraction notices or corrections.
+        Check PubMed whether a paper has been retracted.
 
         Args:
-            paper: Paper dictionary with pmid field
+            paper: Paper dictionary with a pmid or doi field
 
         Returns:
-            Dictionary with retraction status and notices
+            Dictionary with retraction status and notices. check_status says
+            whether is_retracted is a finding: "checked", "lookup_failed" (the
+            PubMed call failed) or "not_checked" (no identifier or no PubMed
+            tool); is_retracted is False unless checked and retracted.
         """
+        # has_correction and has_expression_of_concern are None (unknown):
+        # PubMed links an erratum or a concern to the article only in efetch's
+        # CommentsCorrections, which this check does not read (correction[pt]
+        # and erratum[pt] match no record at all).
         result = {
             "is_retracted": False,
-            "has_correction": False,
-            "has_expression_of_concern": False,
+            "check_status": "not_checked",
+            "has_correction": None,
+            "has_expression_of_concern": None,
             "notices": []
         }
 
         pmid = paper.get('pmid')
-        if not pmid or not self.pubmed_tool:
+        # PubMed indexes the bare DOI, not a doi.org URL or a "doi:" form
+        doi = re.sub(r'^(?:https?://(?:dx\.)?doi\.org/|doi:\s*)', '',
+                     (paper.get('doi') or '').strip(), flags=re.IGNORECASE)
+        if not (pmid or doi) or not self.pubmed_tool:
             return result
 
-        logger.info("Checking retraction status", pmid=pmid)
+        logger.info("Checking retraction status", pmid=pmid, doi=doi)
 
         try:
-            # Query PubMed for retraction notices
-            # PubMed uses publication types: retracted[pt], retraction[pt]
-            retraction_query = f"{pmid}[PMID] AND (retracted[pt] OR retraction[pt])"
-
+            # A retracted article has the publication type "Retracted
+            # Publication"; retracted[pt] and retraction[pt] match nothing.
+            identifier = f"{pmid}[PMID]" if pmid else f'"{doi}"[doi]'
             retraction_result = await self.pubmed_tool.execute(
-                retraction_query,
+                f'{identifier} AND "retracted publication"[pt]',
                 max_results=5
             )
 
-            if retraction_result.success and retraction_result.data:
-                result["is_retracted"] = True
-                for notice in retraction_result.data:
-                    result["notices"].append({
-                        "type": "retraction",
-                        "title": notice.get('title', ''),
-                        "date": notice.get('year', '')
-                    })
-
-            # Check for corrections
-            correction_query = f"{pmid}[PMID] AND (correction[pt] OR erratum[pt])"
-
-            correction_result = await self.pubmed_tool.execute(
-                correction_query,
-                max_results=5
-            )
-
-            if correction_result.success and correction_result.data:
-                result["has_correction"] = True
-                for notice in correction_result.data:
-                    result["notices"].append({
-                        "type": "correction",
-                        "title": notice.get('title', ''),
-                        "date": notice.get('year', '')
-                    })
-
-            # Check for expression of concern
-            concern_query = f"{pmid}[PMID] AND expression of concern[pt]"
-
-            concern_result = await self.pubmed_tool.execute(
-                concern_query,
-                max_results=5
-            )
-
-            if concern_result.success and concern_result.data:
-                result["has_expression_of_concern"] = True
-                for notice in concern_result.data:
-                    result["notices"].append({
-                        "type": "expression_of_concern",
-                        "title": notice.get('title', ''),
-                        "date": notice.get('year', '')
-                    })
+            if not retraction_result.success:
+                result["check_status"] = "lookup_failed"
+                logger.warning("Retraction check failed", pmid=pmid, doi=doi,
+                               error=retraction_result.error)
+            else:
+                result["check_status"] = "checked"
+                if retraction_result.data:
+                    result["is_retracted"] = True
+                    for notice in retraction_result.data:
+                        result["notices"].append({
+                            "type": "retraction",
+                            "title": notice.get('title', ''),
+                            "date": notice.get('year', '')
+                        })
 
         except Exception as e:
-            logger.warning("Retraction check failed", pmid=pmid, error=str(e))
+            result["check_status"] = "lookup_failed"
+            logger.warning("Retraction check failed", pmid=pmid, doi=doi, error=str(e))
 
         logger.info(
             "Retraction check complete",
             pmid=pmid,
-            is_retracted=result["is_retracted"],
-            has_correction=result["has_correction"]
+            doi=doi,
+            is_retracted=result["is_retracted"]
         )
 
         return result
@@ -413,7 +400,8 @@ class RefutationSearchTool(BaseTool):
     def format_contradictions_for_context(
         self,
         contradictions: List[Dict[str, Any]],
-        retraction_status: Dict[str, Dict[str, Any]]
+        retraction_status: Dict[str, Dict[str, Any]],
+        search_status: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Format contradictions and retraction status for LLM context.
@@ -421,14 +409,24 @@ class RefutationSearchTool(BaseTool):
         Args:
             contradictions: List of contradictory papers
             retraction_status: Dict mapping paper title to retraction info
+            search_status: search_contradictions' status, if known
 
         Returns:
             Formatted string for inclusion in LLM prompts
         """
         parts = []
+        attempted = (search_status or {}).get("attempted", 0)
+        failed = (search_status or {}).get("failed", 0)
 
+        # The papers are what negated-claim queries returned with negative-
+        # result wording in the abstract (_is_contradiction); nothing has
+        # checked that they contradict this hypothesis.
         if contradictions:
-            parts.append(f"CONTRADICTORY EVIDENCE FOUND ({len(contradictions)} papers):")
+            parts.append(
+                f"PAPERS FROM NEGATED-CLAIM SEARCHES ({len(contradictions)}): their abstracts "
+                f"contain negative-result wording (a keyword heuristic). Whether each one "
+                f"contradicts THIS hypothesis has not been checked; judge that yourself."
+            )
             for i, paper in enumerate(contradictions, 1):
                 title = paper.get('title', 'Unknown')
                 year = paper.get('year', 'N/A')
@@ -440,8 +438,17 @@ class RefutationSearchTool(BaseTool):
                     f"    Source: {source}\n"
                     f"    Abstract: {abstract}..."
                 )
+        elif attempted and failed >= attempted:
+            parts.append(
+                f"The contradiction search could not be completed ({failed} of {attempted} "
+                f"searches failed): whether contradicting papers exist is unknown, not ruled out."
+            )
         else:
-            parts.append("No contradictory evidence found.")
+            parts.append("Negated-claim searches returned no papers with negative-result wording.")
+
+        if failed and failed < attempted:
+            parts.append(f"Note: {failed} of {attempted} contradiction searches failed, so "
+                         f"this list may be incomplete.")
 
         if retraction_status:
             retracted = [
@@ -449,7 +456,7 @@ class RefutationSearchTool(BaseTool):
                 if status.get('is_retracted')
             ]
             if retracted:
-                parts.append(f"\nWARNING: {len(retracted)} supporting citation(s) have been RETRACTED:")
+                parts.append(f"\nWARNING: {len(retracted)} contradicting paper(s) have been RETRACTED:")
                 for title in retracted:
                     parts.append(f"  - {title}")
 

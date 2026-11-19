@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     tavily_api_key: str | None = None
     pubmed_api_key: str | None = None
+    semantic_scholar_api_key: str | None = None  # free tier 1 r/s; key just gives a dedicated lane
 
     # LangSmith Observability (Phase 5F)
     langchain_tracing_v2: bool = False
@@ -22,7 +23,12 @@ class Settings(BaseSettings):
     langchain_endpoint: str = "https://api.smith.langchain.com"
 
     # LLM Provider Selection (change this to switch providers globally)
-    llm_provider: Literal["google", "openai"] = "google"
+    llm_provider: Literal["google", "openai", "bedrock"] = "google"
+
+    # AWS Bedrock Configuration
+    # Per-model Application Inference Profiles arrive as the
+    # BEDROCK_INFERENCE_PROFILE_ARNS JSON map, read in src/llm/bedrock.py.
+    bedrock_region: str = "ap-southeast-2"
 
     # Storage Configuration (Phase 4 - Database Agent)
     # Options: "memory" (development), "postgres" (production), "cached" (production + Redis)
@@ -53,12 +59,12 @@ class Settings(BaseSettings):
     api_debug: bool = False
 
     # Google Model Configuration
-    google_generation_model: str = "gemini-3-pro-preview"
-    google_reflection_model: str = "gemini-2.5-flash"
-    google_ranking_model: str = "gemini-3-flash-preview"
-    google_evolution_model: str = "gemini-3-pro-preview"
-    google_meta_review_model: str = "gemini-3-flash-preview"
-    google_supervisor_model: str = "gemini-2.0-flash"
+    google_generation_model: str = "gemini-4-argon"
+    google_reflection_model: str = "gemini-3.8-flash"
+    google_ranking_model: str = "gemini-3.8-flash"
+    google_evolution_model: str = "gemini-4-argon"
+    google_meta_review_model: str = "gemini-3.8-flash"
+    google_supervisor_model: str = "gemini-3.8-flash"
 
     # OpenAI Model Configuration
     openai_generation_model: str = "gpt-5.1"
@@ -68,9 +74,81 @@ class Settings(BaseSettings):
     openai_meta_review_model: str = "gpt-5"
     openai_supervisor_model: str = "gpt-5-nano"
 
+    # AWS Bedrock Model Configuration
+    # ----------------------------------------------------------------
+    # Mirrors the Gemini per-agent tiering: Pro-tier model for high-reasoning
+    # work (generation, evolution, meta-review), Flash-tier for screening /
+    # ranking / orchestration (reflection, ranking, supervisor).
+    #
+    # Defaults below are Anthropic Claude (Bedrock variant "anthropic"):
+    #   Pro tier  -> Opus 4.8
+    #   Flash tier-> Sonnet 5  (no Haiku per AGF policy)
+    # Not Opus 5.5: its built-in Bedrock content filter blocked the real
+    # generation prompt on 6/6 benign biotech goals (2026-10-16), and there is
+    # no way to relax it on Bedrock. Opus 4.8 and Sonnet 5 passed 6/6 each.
+    #
+    # Model IDs verified 2026-10-16 with list-foundation-models in
+    # ap-southeast-2 plus a real Converse call per model (listing alone does
+    # not prove the account can invoke a model). All of them are
+    # INFERENCE_PROFILE-only; src/llm/bedrock.py maps each ID to its profile.
+    #
+    # When the user picks a different Bedrock variant in the AGF Co-Scientist
+    # submission UI, the website API overrides these via ECS task env vars
+    # (BEDROCK_GENERATION_MODEL etc.) following the same Pro/Flash tiering;
+    # pydantic_settings auto-reads the env vars:
+    #
+    #   variant     | Pro tier (gen/evolution/meta_review) | Flash tier (reflection/ranking/supervisor)
+    #   ------------|--------------------------------------|---------------------------------------------
+    #   anthropic   | anthropic.claude-opus-4-8            | anthropic.claude-sonnet-5
+    #   openai      | openai.gpt-6-astra                   | openai.gpt-6-luna
+    #   kimi        | moonshotai.kimi-k3                   | moonshotai.kimi-k3 (single model)
+    bedrock_generation_model: str = "anthropic.claude-opus-4-8"
+    bedrock_reflection_model: str = "anthropic.claude-sonnet-5"
+    bedrock_ranking_model: str = "anthropic.claude-sonnet-5"
+    bedrock_evolution_model: str = "anthropic.claude-opus-4-8"
+    bedrock_meta_review_model: str = "anthropic.claude-opus-4-8"
+    bedrock_supervisor_model: str = "anthropic.claude-sonnet-5"
+
+    # ----------------------------------------------------------------
+    # Per-Agent Provider/Model Overrides (Phase 7 - AGF Website)
+    # ----------------------------------------------------------------
+    # When set, these override BOTH the global llm_provider AND the
+    # corresponding provider-specific model field for that agent.
+    # Allows mixing providers within a single run, e.g. Anthropic Opus for
+    # generation while GPT-6 Luna does reflection. Set via ECS RunTask env
+    # vars (e.g. GENERATION_PROVIDER_OVERRIDE=bedrock,
+    # GENERATION_MODEL_OVERRIDE=anthropic.claude-opus-4-8). Pydantic
+    # auto-reads env vars matching field names.
+    generation_provider_override: Literal["google", "openai", "bedrock"] | None = None
+    generation_model_override: str | None = None
+    reflection_provider_override: Literal["google", "openai", "bedrock"] | None = None
+    reflection_model_override: str | None = None
+    ranking_provider_override: Literal["google", "openai", "bedrock"] | None = None
+    ranking_model_override: str | None = None
+    evolution_provider_override: Literal["google", "openai", "bedrock"] | None = None
+    evolution_model_override: str | None = None
+    meta_review_provider_override: Literal["google", "openai", "bedrock"] | None = None
+    meta_review_model_override: str | None = None
+    supervisor_provider_override: Literal["google", "openai", "bedrock"] | None = None
+    supervisor_model_override: str | None = None
+
     # System Configuration
     budget_aud: float = 50.0
     max_workers: int = 4
+    # Share of budget_aud the iteration loop leaves for the final meta-review,
+    # research overview and report: the loop stops at the rest, the final
+    # synthesis may use the whole budget.
+    finalization_reserve_fraction: float = 0.05
+
+    # Run options from the website's form (hypothesis.yaml; aws_entrypoint.py
+    # sets them). enable_web_search off: no literature retrieval, refutation
+    # search or DOI checks, so citations stay not_checked.
+    enable_web_search: bool = True
+    enable_evolution: bool = True
+
+    # Reviews the meta-review prompt shows: the newest of each hypothesis and
+    # review type, failed ones first (meta_review.py).
+    meta_review_max_reviews: int = 40
 
     # Tool Configuration (Phase 5B - Literature Tools)
     tool_timeout_seconds: int = 30
@@ -115,24 +193,14 @@ class Settings(BaseSettings):
     drain_phase_start_fraction: float = 0.85
     drain_max_iterations: int = 5
 
-    # B8 fix: bound FULL-review literature search to N queries per review,
-    # limiting Tavily cost and latency added by re-searching during review.
-    full_review_max_queries: int = 3
-
     # Diversity Sampling Configuration (Phase 6B - UX Enhancement)
     diversity_sampling_enabled: bool = True  # Enable diversity sampling feature
     diversity_sampling_for_overview: bool = True  # Use in final overview generation
     diversity_sampling_min_elo: float = 1200.0  # Minimum Elo rating for selection
     diversity_sampling_default_n: int = 10  # Default number of diverse hypotheses
 
-    # Paths.
-    # __file__ is src/config/_main.py — climb three parents to reach the
-    # repo root. (Deployable copy has src/config.py so it only needed two;
-    # when this canonical tree turned config into a package, the path lost
-    # a level and started resolving project_root to src/ instead of the
-    # repo root, breaking the prompts_dir / architecture_dir / data_dir
-    # resolution. Restored here so scripts/run_batch.py can find prompts.)
-    project_root: Path = Path(__file__).parent.parent.parent
+    # Paths
+    project_root: Path = Path(__file__).parent.parent
     prompts_dir: Path = project_root / "02_Prompts"
     architecture_dir: Path = project_root / "03_architecture"
     data_dir: Path = project_root / "data"

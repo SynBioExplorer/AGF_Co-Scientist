@@ -470,6 +470,10 @@ class InMemoryStorage(BaseStorage):
         """Get research overview."""
         return self._overviews.get(goal_id)
 
+    async def clear_research_overview(self, goal_id: str) -> None:
+        """Invalidate a synthesis before final review state is reevaluated."""
+        self._overviews.pop(goal_id, None)
+
     # =========================================================================
     # Agent Tasks
     # =========================================================================

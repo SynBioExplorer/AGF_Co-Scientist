@@ -89,6 +89,19 @@ Your evolved hypothesis MUST directly address this research goal. Do NOT propose
 {context_guidance}
 """
 
+        # An evolved hypothesis cites only papers the source hypotheses already
+        # cite (validated at generation), never papers the model recalls.
+        available_citations = self._available_citations(hypothesis, similar_hypotheses)
+        if available_citations:
+            citation_rule = (
+                'For "citations", cite only papers from this list, copying title and doi '
+                "exactly; use [] if none supports the evolved hypothesis:\n"
+                + "\n".join(json.dumps({"title": c.title, "doi": c.doi or ""})
+                            for c in available_citations)
+            )
+        else:
+            citation_rule = 'The source hypotheses cite no literature, so return "citations": [].'
+
         # Add structured output instruction
         structured_prompt = f"""{prompt}
 
@@ -105,10 +118,12 @@ IMPORTANT: Return your response as valid JSON matching this schema:
         "success_criteria": "What constitutes success"
     }},
     "citations": [
-        {{"doi": "10.xxxx/xxxxx", "relevance": "Why this paper is relevant"}}
+        {{"title": "Paper title", "doi": "10.xxxx/xxxxx", "relevance": "Why this paper is relevant"}}
     ],
     "evolution_rationale": "Explanation of how this hypothesis was evolved from the original"
 }}
+
+{citation_rule}
 
 Respond with ONLY the JSON object, no additional text."""
 
@@ -121,7 +136,8 @@ Respond with ONLY the JSON object, no additional text."""
             response = self.llm_client.invoke(structured_prompt)
             try:
                 response = self._parse_evolution_response(
-                    response, hypothesis, strategy, existing_titles=existing_titles
+                    response, hypothesis, strategy, existing_titles=existing_titles,
+                    available_citations=available_citations,
                 )
                 return response
             except CoScientistError as e:
@@ -141,6 +157,7 @@ Respond with ONLY the JSON object, no additional text."""
         hypothesis,
         strategy,
         existing_titles: Optional[set] = None,
+        available_citations: Optional[list[Citation]] = None,
     ) -> "Hypothesis":
         """Parse evolution LLM response into a Hypothesis, raising on failure."""
         try:
@@ -199,10 +216,9 @@ Respond with ONLY the JSON object, no additional text."""
                 rationale=data.get("rationale", hypothesis.rationale),
                 mechanism=data.get("mechanism", hypothesis.mechanism),
                 experimental_protocol=ExperimentalProtocol(**proto),
-                literature_citations=[
-                    Citation(**c) for c in data.get("citations", [])
-                    if isinstance(c, dict) and c.get("title")
-                ],
+                literature_citations=self._select_citations(
+                    data.get("citations"), available_citations or []
+                ),
                 generation_method=hypothesis.generation_method,
                 parent_hypothesis_ids=[hypothesis.id],  # Track evolution lineage
                 # B1 fix: do NOT inherit parent's Elo. Each evolved hypothesis
@@ -224,6 +240,44 @@ Respond with ONLY the JSON object, no additional text."""
 
         except (json.JSONDecodeError, ValidationError, KeyError) as e:
             raise CoScientistError(f"Failed to parse LLM response: {e}\nResponse: {response[:500]}")
+
+    def _available_citations(
+        self, hypothesis: Hypothesis, similar_hypotheses: Optional[list[Hypothesis]]
+    ) -> list[Citation]:
+        """Citations of the source hypotheses, one per DOI (or title)."""
+        available, seen = [], set()
+        for source in [hypothesis, *(similar_hypotheses or [])]:
+            for citation in source.literature_citations:
+                key = (citation.doi or citation.title).strip().casefold()
+                if key not in seen:
+                    seen.add(key)
+                    available.append(citation)
+        return available
+
+    def _select_citations(self, cited, available: list[Citation]) -> list[Citation]:
+        """The available citations the model chose, with its relevance for the
+        evolved hypothesis. Anything else it cites is dropped, so an evolved
+        hypothesis never carries a reference the model made up."""
+        by_key = {}
+        for citation in available:
+            for key in (citation.doi, citation.title):
+                if key and key.strip():
+                    by_key.setdefault(key.strip().casefold(), citation)
+
+        selected, chosen = [], set()
+        for c in cited if isinstance(cited, list) else []:
+            if not isinstance(c, dict):
+                continue
+            keys = (str(c.get(field) or "").strip().casefold() for field in ("doi", "title"))
+            match = next((by_key[k] for k in keys if k in by_key), None)
+            if match is None or id(match) in chosen:
+                continue
+            chosen.add(id(match))
+            relevance = c.get("relevance")
+            if isinstance(relevance, str) and relevance.strip():
+                match = match.model_copy(update={"relevance": relevance})
+            selected.append(match)
+        return selected
 
     def _format_hypothesis(self, hypothesis: Hypothesis) -> str:
         """Format hypothesis for prompt"""

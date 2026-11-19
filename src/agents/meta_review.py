@@ -1,11 +1,11 @@
 """Meta-review Agent - Synthesize feedback patterns"""
 
-from typing import List
+from typing import Dict, List, Optional
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent / "03_architecture"))
 from schemas import (
-    Review, TournamentMatch, MetaReviewCritique, ResearchOverview,
+    Review, ReviewType, TournamentMatch, MetaReviewCritique, ResearchOverview,
     ResearchDirection, ResearchContact, Hypothesis
 )
 
@@ -133,7 +133,8 @@ Respond with ONLY the JSON object, no additional text."""
         top_hypotheses: List[Hypothesis],
         meta_review: MetaReviewCritique,
         preferences: List[str] = None,
-        research_goal_id: str = None
+        research_goal_id: str = None,
+        review_status: Optional[Dict[str, str]] = None,
     ) -> ResearchOverview:
         """Generate comprehensive research overview
 
@@ -142,6 +143,8 @@ Respond with ONLY the JSON object, no additional text."""
             top_hypotheses: Top-ranked hypotheses
             meta_review: Meta-review critique
             preferences: User preferences
+            review_status: Hypothesis ID -> its review verdicts; a hypothesis
+                without an entry is shown as UNREVIEWED
 
         Returns:
             ResearchOverview with directions and recommendations
@@ -153,13 +156,26 @@ Respond with ONLY the JSON object, no additional text."""
         )
 
         # Format top hypotheses
+        def _clip(text, n):
+            text = text or "Not specified"
+            return text if len(text) <= n else text[:n] + "..."
+
         hypotheses_text = "\n\n".join([
             f"Hypothesis {i+1} (Elo: {h.elo_rating:.1f}):\n"
             f"Title: {h.title}\n"
-            f"Statement: {h.hypothesis_statement[:200]}...\n"
-            f"Mechanism: {h.mechanism[:150]}..."
+            + (f"Review status: {review_status.get(h.id, 'UNREVIEWED')}\n"
+               if review_status is not None else "")
+            + f"Statement: {_clip(h.hypothesis_statement, 600)}\n"
+            f"Mechanism: {_clip(h.mechanism, 400)}"
             for i, h in enumerate(top_hypotheses)
         ])
+        review_note = ""
+        if review_status is not None:
+            review_note = (
+                "\nElo is a relative preference from pairwise comparisons, not evidence that a "
+                "hypothesis is correct. A hypothesis whose review status is UNREVIEWED has not "
+                "been assessed, and a failed review names unresolved problems: do not present "
+                "either as established; say what must be checked first.\n")
 
         prompt = f"""Generate a comprehensive research overview for the following goal:
 
@@ -170,6 +186,7 @@ Preferences:
 
 Top Hypotheses:
 {hypotheses_text}
+{review_note}
 
 Meta-Review Insights:
 - Recurring Strengths: {', '.join(meta_review.recurring_strengths)}
@@ -254,9 +271,32 @@ Respond with ONLY the JSON object, no additional text."""
             raise CoScientistError(f"Failed to parse overview response: {e}\nResponse: {response[:500]}")
 
     def _format_reviews(self, reviews: List[Review]) -> str:
-        """Format reviews for prompt"""
-        formatted = []
-        for i, review in enumerate(reviews, 1):
+        """Format reviews for prompt.
+
+        The newest review of each hypothesis and review type, failed reviews
+        first (they carry the unresolved problems), then the deeper review
+        stages, newest first; at most settings.meta_review_max_reviews, and a
+        first line saying how many were left out. Storage returns reviews
+        oldest first, so a plain prefix showed only the run's first reviews.
+        """
+        latest = {}
+        for review in reviews:
+            key = (review.hypothesis_id, review.review_type)
+            if key not in latest or review.created_at > latest[key].created_at:
+                latest[key] = review
+        depth = {ReviewType.DEEP_VERIFICATION: 0, ReviewType.SIMULATION: 1,
+                 ReviewType.FULL: 2, ReviewType.OBSERVATION: 3, ReviewType.INITIAL: 4}
+        ordered = sorted(latest.values(), key=lambda r: (
+            r.passed, depth.get(r.review_type, 5), -r.created_at.timestamp()))
+        shown = ordered[:settings.meta_review_max_reviews]
+        failed = sum(not r.passed for r in latest.values())
+
+        formatted = [
+            f"Coverage: {len(shown)} of {len(latest)} distinct reviews shown (the newest of each "
+            f"hypothesis and review type, from {len(reviews)} reviews in all); "
+            f"{sum(not r.passed for r in shown)} of {failed} failed reviews shown."
+        ]
+        for i, review in enumerate(shown, 1):
             formatted.append(f"""Review {i}:
 - Hypothesis ID: {review.hypothesis_id}
 - Type: {review.review_type.value}
@@ -264,18 +304,20 @@ Respond with ONLY the JSON object, no additional text."""
 - Scores: Correctness={review.correctness_score}, Quality={review.quality_score}, Novelty={review.novelty_score}
 - Strengths: {', '.join(review.strengths) if review.strengths else 'N/A'}
 - Weaknesses: {', '.join(review.weaknesses) if review.weaknesses else 'N/A'}
-- Rationale: {review.rationale[:200]}...
+- Rationale: {review.rationale[:400]}...
 """)
-        return "\n".join(formatted[:20])  # Limit to 20 reviews to avoid context overflow
+        return "\n".join(formatted)
 
     def _format_tournament_results(self, matches: List[TournamentMatch]) -> str:
-        """Format tournament results for prompt"""
-        formatted = []
-        for i, match in enumerate(matches, 1):
+        """Format tournament results for prompt: the 15 newest matches, which
+        include the evolved hypotheses, with a line saying how many there are."""
+        recent = sorted(matches, key=lambda m: m.created_at)[-15:]
+        formatted = [f"Coverage: the {len(recent)} most recent of {len(matches)} matches."]
+        for i, match in enumerate(recent, 1):
             formatted.append(f"""Match {i}:
 - Hypotheses: {match.hypothesis_a_id} vs {match.hypothesis_b_id}
 - Winner: {match.winner_id}
 - Elo Changes: A={match.elo_change_a:.1f}, B={match.elo_change_b:.1f}
 - Rationale: {match.decision_rationale[:150]}...
 """)
-        return "\n".join(formatted[:15])  # Limit to 15 matches
+        return "\n".join(formatted)

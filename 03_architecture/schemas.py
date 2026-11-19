@@ -249,6 +249,17 @@ class Citation(BaseModel):
     relevance: str = Field(
         ..., description="How this citation supports the hypothesis"
     )
+    # Identity check of the DOI, set by GenerationAgent._validate_citations:
+    # verified (the DOI's paper has this title), title_mismatch (the DOI is a
+    # different paper: canonical_title), unresolved (no paper found for the
+    # DOI), lookup_failed, no_identifier, or not_checked. It says nothing
+    # about whether the paper supports the claim.
+    verification_status: str = Field(
+        "not_checked", description="Result of the DOI identity check"
+    )
+    canonical_title: Optional[str] = Field(
+        None, description="Title of the paper the DOI resolves to"
+    )
 
 
 class ExperimentalProtocol(BaseModel):
@@ -382,6 +393,10 @@ class DeepVerificationReview(Review):
     )
     invalidated_assumptions: list[Assumption] = Field(
         default_factory=list, description="Assumptions found to be invalid"
+    )
+    uncertain_assumptions: list[Assumption] = Field(
+        default_factory=list,
+        description="Assumptions neither verified nor invalidated",
     )
     invalidation_reasons: list[str] = Field(
         default_factory=list,
@@ -854,9 +869,10 @@ class ObservationReviewScore(BaseModel):
     )
 
     # Aggregate scores
-    overall_score: float = Field(
-        ..., ge=0.0, le=1.0, description="Overall explanation score (mean of explanations)"
+    overall_score: Optional[float] = Field(
+        None, ge=0.0, le=1.0, description="Mean of explanations; unknown when evidence is unavailable"
     )
+    assessment_status: str = Field("complete", description="complete or unavailable; set by the evidence pipeline")
     observations_explained_count: int = Field(
         0, description="Number of observations explained (score >= 0.5)"
     )

@@ -71,15 +71,13 @@ class PubMedTool(BaseTool):
         return "biomedical"
 
     async def _rate_limit(self):
-        """Enforce rate limiting"""
-        current_time = time.time()
-        time_since_last = current_time - self.last_request_time
-
-        if time_since_last < self.min_request_interval:
-            wait_time = self.min_request_interval - time_since_last
-            await asyncio.sleep(wait_time)
-
-        self.last_request_time = time.time()
+        """Enforce rate limiting. Each caller reserves its own slot before it
+        sleeps, so concurrent callers queue up instead of all passing at once."""
+        now = time.time()
+        slot = max(now, self.last_request_time + self.min_request_interval)
+        self.last_request_time = slot
+        if slot > now:
+            await asyncio.sleep(slot - now)
 
     async def _esearch(self, query: str, max_results: int) -> List[str]:
         """
@@ -214,13 +212,16 @@ class PubMedTool(BaseTool):
             if article is None:
                 return None
 
-            # Title
+            # Title. .text stops at the first inline tag (<i>Cas9</i>), itertext does not.
             title_elem = article.find('.//ArticleTitle')
-            title = title_elem.text if title_elem is not None and title_elem.text else ""
+            title = "".join(title_elem.itertext()).strip() if title_elem is not None else ""
 
-            # Abstract
-            abstract_elem = article.find('.//AbstractText')
-            abstract = abstract_elem.text if abstract_elem is not None and abstract_elem.text else ""
+            # Abstract: a structured abstract has one labelled AbstractText per section
+            abstract = "\n".join(
+                (f"{part.get('Label')}: " if part.get('Label') else "")
+                + "".join(part.itertext()).strip()
+                for part in article.findall('.//Abstract/AbstractText')
+            )
 
             # Authors
             authors = []

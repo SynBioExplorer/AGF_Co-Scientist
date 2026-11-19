@@ -8,11 +8,14 @@ Raises BudgetExceededError when the budget is exhausted.
 import json
 import os
 import logging
-from datetime import datetime
+import math
+import uuid
+import time
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field, asdict
-from threading import Lock
+from threading import RLock
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,12 @@ MODEL_PRICING = {
     # =========================================================================
     # GOOGLE GEMINI MODELS
     # =========================================================================
+    # Gemini 4 Argon / 3.8 Flash: date-dependent, see GEMINI_PROMOTIONS below.
+
+    # Gemini 3.1 Pro Preview (prompts ≤200k tokens; verify current pricing)
+    "gemini-3.1-pro-preview": {"input": 2.00, "output": 12.00},
+    "gemini-3.1-pro": {"input": 2.00, "output": 12.00},
+
     # Gemini 3 Pro Preview (prompts ≤200k tokens)
     # For >200k: input=$4.00, output=$18.00
     "gemini-3-pro-preview": {"input": 2.00, "output": 12.00},
@@ -69,13 +78,106 @@ MODEL_PRICING = {
     "gpt-5-pro": {"input": 15.00, "output": 120.00},
 
     # =========================================================================
-    # ANTHROPIC CLAUDE MODELS
+    # ANTHROPIC CLAUDE MODELS (direct API)
     # =========================================================================
     "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
     "claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
     "claude-3-5-haiku-20241022": {"input": 0.80, "output": 4.00},
     "claude-opus-4-20250514": {"input": 15.00, "output": 75.00},
+
+    # =========================================================================
+    # AWS BEDROCK MODELS
+    # =========================================================================
+    # Bedrock charges the same per-token rate as direct provider APIs for
+    # Anthropic models. Verify current pricing at deploy time:
+    #   https://aws.amazon.com/bedrock/pricing/
+
+    # Current AGF website catalog (2026-10-16). Rates from the AWS Price List
+    # API (ap-southeast-2, on-demand Standard) and, for GPT-6 Luna, which the
+    # Price List does not carry yet, its Bedrock model card. Keyed by the
+    # foundation-model ID, which is what BedrockClient passes as `model`.
+    # Claude runs through au.* (Australia geo, 10% over global); GPT-6 and
+    # Kimi K3 are global-only from Sydney. GPT-6 rates are the short-context
+    # tier (<=272K input tokens).
+    "anthropic.claude-opus-4-8":   {"input": 5.50,  "output": 27.50},
+    "anthropic.claude-sonnet-5":   {"input": 2.20,  "output": 11.00},
+    "openai.gpt-6-astra":          {"input": 10.00, "output": 50.00},
+    "openai.gpt-6-luna":           {"input": 0.10,  "output": 0.50},
+    "moonshotai.kimi-k3":          {"input": 3.00,  "output": 15.00},
+
+    # Anthropic Claude (via Bedrock) — same pricing as direct API.
+    # Verified via list-foundation-models on 2026-05-05; ap-southeast-2.
+    # Opus 4.7 = Pro tier (generation/evolution/meta-review)
+    # Sonnet 4.6 = Flash tier (reflection/ranking/supervisor)
+    # No Haiku — AGF policy: keep all agents on Sonnet 4.6 or above.
+    # Opus 4.7 / Sonnet 4.6 are INFERENCE_PROFILE-only on Bedrock — must be
+    # invoked via cross-region profile (au.* in ap-southeast-2). Pricing is the
+    # same as the underlying foundation model. Both forms keyed for safety.
+    "au.anthropic.claude-opus-4-7":              {"input": 15.00, "output": 75.00},
+    "au.anthropic.claude-sonnet-4-6":            {"input": 3.00,  "output": 15.00},
+    "global.anthropic.claude-opus-4-7":          {"input": 15.00, "output": 75.00},
+    "global.anthropic.claude-sonnet-4-6":        {"input": 3.00,  "output": 15.00},
+    "anthropic.claude-opus-4-7":                 {"input": 15.00, "output": 75.00},
+    "anthropic.claude-sonnet-4-6":               {"input": 3.00,  "output": 15.00},
+    # Older revisions kept for back-compat with any existing saved runs.
+    "anthropic.claude-opus-4-5-20251101-v1:0":   {"input": 15.00, "output": 75.00},
+    "anthropic.claude-opus-4-6-v1":              {"input": 15.00, "output": 75.00},
+    "anthropic.claude-sonnet-4-5-20250929-v1:0": {"input": 3.00,  "output": 15.00},
+    "anthropic.claude-3-5-sonnet-20241022-v2:0": {"input": 3.00,  "output": 15.00},
+
+    # DeepSeek (via Bedrock) — only V3.x available in ap-southeast-2 (no R1).
+    "deepseek.v3.2":      {"input": 0.27, "output": 1.10},
+    "deepseek.v3-v1:0":   {"input": 0.27, "output": 1.10},  # V3.1
+
+    # OpenAI GPT-OSS (via Bedrock — open-source models hosted on Bedrock)
+    # 120B = Pro tier; 20B = Flash tier. Note: id suffix is `-1:0`, not `-v1:0`.
+    "openai.gpt-oss-120b-1:0": {"input": 1.50, "output": 6.00},
+    "openai.gpt-oss-20b-1:0":  {"input": 0.20, "output": 0.80},
+
+    # Moonshot Kimi (via Bedrock) — official ap-southeast-2 rates.
+    # K2 Thinking = Pro tier (generation/evolution/meta-review).
+    # K2.5        = Flash tier (reflection/ranking/supervisor).
+    "moonshot.kimi-k2-thinking": {"input": 0.6180, "output": 2.5750},
+    "moonshotai.kimi-k2.5":      {"input": 0.6180, "output": 3.0900},
+
+    # Mistral (via Bedrock) — published rates ap-southeast-2.
+    "mistral.mistral-large-2402-v1:0":    {"input": 4.00, "output": 12.00},
+    "mistral.mixtral-8x7b-instruct-v0:1": {"input": 0.45, "output": 0.70},
+    "mistral.mistral-7b-instruct-v0:2":   {"input": 0.15, "output": 0.20},
+
+    # NVIDIA Nemotron (via Bedrock) — newer to ap-southeast-2.
+    # Published Bedrock pricing for older Nemotron Super 49B was $0.92/$3.68.
+    # The 3.x family rates below are best-effort estimates aligned to model
+    # size; refine if AWS publishes official figures (the cost reporter uses
+    # these only for AUD/USD display; runs aren't blocked by inaccuracy).
+    "nvidia.nemotron-super-3-120b": {"input": 1.50, "output": 4.50},
+    "nvidia.nemotron-nano-3-30b":   {"input": 0.30, "output": 0.60},
+    "nvidia.nemotron-nano-12b-v2":  {"input": 0.15, "output": 0.30},
+    "nvidia.nemotron-nano-9b-v2":   {"input": 0.10, "output": 0.20},
 }
+
+# Gemini 4 Argon / 3.8 Flash: Google's paid Standard tier, checked 2026-10-16.
+# Both are on introductory pricing that doubles after the listed last day.
+# Pricing at the full rate before then would show users twice their real spend
+# and stop runs at half their budget, so each run is priced at the rate in
+# force when its container starts. Output includes thinking tokens.
+GEMINI_PROMOTIONS = {
+    # model: (last promotional day, promotional rate, full rate)
+    "gemini-4-argon": (date(2026, 11, 30),
+                       {"input": 2.00, "output": 10.00}, {"input": 4.00, "output": 20.00}),
+    "gemini-3.8-flash": (date(2026, 12, 31),
+                         {"input": 0.75, "output": 3.75}, {"input": 1.50, "output": 7.50}),
+}
+
+
+def gemini_rate(model: str, today: date) -> dict:
+    """The rate in force for a GEMINI_PROMOTIONS model on a given day."""
+    last_promo_day, promo, full = GEMINI_PROMOTIONS[model]
+    return promo if today <= last_promo_day else full
+
+
+for _model in GEMINI_PROMOTIONS:
+    MODEL_PRICING[_model] = gemini_rate(_model, date.today())
 
 # USD to AUD conversion (update periodically)
 USD_TO_AUD = 1.55
@@ -83,13 +185,17 @@ USD_TO_AUD = 1.55
 
 class BudgetExceededError(Exception):
     """Raised when the cost budget has been exceeded."""
-    def __init__(self, current_cost: float, budget: float, currency: str = "AUD"):
+    def __init__(self, current_cost: float, budget: float, currency: str = "AUD",
+                 reserve: float = 0.0):
         self.current_cost = current_cost
         self.budget = budget
         self.currency = currency
+        self.reserve = reserve
+        note = (f" (${reserve:.2f} {currency} of it kept for the final synthesis)"
+                if reserve > 0 else "")
         super().__init__(
             f"Budget exceeded! Current cost: ${current_cost:.2f} {currency}, "
-            f"Budget: ${budget:.2f} {currency}"
+            f"Budget: ${budget:.2f} {currency}{note}"
         )
 
 
@@ -143,11 +249,121 @@ class CostTracker:
     total_output_tokens: int = 0
     total_calls: int = 0
     started_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    _lock: Lock = field(default_factory=Lock, repr=False)
+    # Kept back from the budget until begin_finalization(): the run's loop
+    # stops at budget_aud - finalization_reserve_aud, so its final synthesis
+    # still has money for its calls (the supervisor sets it).
+    finalization_reserve_aud: float = 0.0
+    finalizing: bool = False
+    deadline_monotonic: Optional[float] = None
+    _reservations: dict = field(default_factory=dict, repr=False)
+    _lock: RLock = field(default_factory=RLock, repr=False)
 
     def __post_init__(self):
+        self._validate_budget()
         if self.persist_path:
             self._load()
+        self._validate_budget()
+
+    def _validate_budget(self) -> None:
+        if not math.isfinite(float(self.budget_aud)) or self.budget_aud < 0:
+            raise ValueError("The run budget must be finite and non-negative")
+
+    def remaining_run_seconds(self) -> Optional[float]:
+        return (None if self.deadline_monotonic is None
+                else max(0.0, self.deadline_monotonic - time.monotonic()))
+
+    @property
+    def committed_cost_aud(self) -> float:
+        """Reported usage plus the bounds of outstanding/uncertain requests."""
+        with self._lock:
+            return self.total_cost_aud + sum(r["cost_aud"] for r in self._reservations.values())
+
+    def reserve_usage(self, *, agent: str, model: str,
+                      max_input_tokens: int, max_output_tokens: int) -> str:
+        """Atomically reserve the configured-price upper bound before dispatch.
+
+        Unpriced models fail closed. A caller must settle reported usage or leave
+        an uncertain reservation; a missing response cannot make possible spend
+        available to another request.
+        """
+        if model not in MODEL_PRICING:
+            raise ValueError(f"No configured price for model {model}; request not sent")
+        if max_input_tokens < 0 or max_output_tokens <= 0:
+            raise ValueError("Request token bounds must be non-negative with a positive output cap")
+        pricing = MODEL_PRICING[model]
+        amount = (max_input_tokens * pricing["input"] + max_output_tokens * pricing["output"]) / 1_000_000 * USD_TO_AUD
+        if not math.isfinite(amount) or amount < 0:
+            raise ValueError("Invalid configured request price")
+        with self._lock:
+            self._validate_budget()
+            if self.committed_cost_aud + amount > self.spend_limit_aud + 1e-9:
+                raise BudgetExceededError(self.committed_cost_aud, self.budget_aud,
+                                          reserve=self.finalization_reserve_aud if not self.finalizing else 0)
+            key = uuid.uuid4().hex
+            self._reservations[key] = {"agent": agent, "model": model,
+                "cost_aud": amount, "state": "pending",
+                "max_input_tokens": max_input_tokens, "max_output_tokens": max_output_tokens}
+            try:
+                if self.persist_path:
+                    self._save()
+            except Exception:
+                del self._reservations[key]
+                raise
+            return key
+
+    def settle_usage(self, reservation: str, *, input_tokens: int, output_tokens: int) -> None:
+        """Replace a request bound with reported usage, retaining a paid result
+        that exactly fills its admitted budget."""
+        with self._lock:
+            request = self._reservations.pop(reservation)
+            try:
+                self.check_and_add_usage(agent=request["agent"], model=request["model"],
+                                         input_tokens=input_tokens, output_tokens=output_tokens)
+            except BudgetExceededError:
+                if self.committed_cost_aud > self.spend_limit_aud + 1e-9:
+                    raise
+            finally:
+                if self.persist_path:
+                    self._save()
+
+    def abandon_reservation(self, reservation: str) -> None:
+        """Retain the bound when a response or its billing metadata is missing."""
+        with self._lock:
+            if reservation in self._reservations:
+                self._reservations[reservation]["state"] = "uncertain"
+                if self.persist_path:
+                    self._save()
+
+    @property
+    def spend_limit_aud(self) -> float:
+        """What may be spent now: the whole budget once finalizing, before
+        that the budget less the finalization reserve."""
+        if self.finalizing:
+            return self.budget_aud
+        return max(0.0, self.budget_aud - self.finalization_reserve_aud)
+
+    def begin_finalization(self) -> None:
+        """Release the finalization reserve for the run's final calls."""
+        self.finalizing = True
+
+    def limit_reached(self) -> bool:
+        """Whether the spend limit is reached (no call may start)."""
+        with self._lock:
+            return self.committed_cost_aud >= self.spend_limit_aud
+
+    def _exceeded(self) -> BudgetExceededError:
+        reserve = 0.0 if self.finalizing else min(self.finalization_reserve_aud, self.budget_aud)
+        return BudgetExceededError(self.committed_cost_aud, self.budget_aud, reserve=reserve)
+
+    def ensure_budget_available(self) -> None:
+        """Raise BudgetExceededError before a call is made once the spend
+        limit is reached. The LLM clients call this first: the cost of a
+        call is known only after it ran, so without it every call started
+        past the limit was billed and then refused."""
+        with self._lock:
+            self._validate_budget()
+            if self.committed_cost_aud >= self.spend_limit_aud:
+                raise self._exceeded()
 
     @property
     def total_cost_aud(self) -> float:
@@ -157,12 +373,13 @@ class CostTracker:
     @property
     def budget_remaining_aud(self) -> float:
         """Get remaining budget in AUD."""
-        return max(0, self.budget_aud - self.total_cost_aud)
+        return max(0, self.budget_aud - self.committed_cost_aud)
 
     @property
     def budget_percentage_used(self) -> float:
         """Get percentage of budget used."""
-        return (self.total_cost_aud / self.budget_aud) * 100
+        return ((self.committed_cost_aud / self.budget_aud) * 100
+                if self.budget_aud else (100.0 if self.committed_cost_aud else 0.0))
 
     def check_budget(self) -> bool:
         """
@@ -183,8 +400,8 @@ class CostTracker:
             "Standalone checks for flow control are still acceptable."
         )
         with self._lock:
-            if self.total_cost_aud >= self.budget_aud:
-                raise BudgetExceededError(self.total_cost_aud, self.budget_aud)
+            if self.committed_cost_aud >= self.spend_limit_aud:
+                raise self._exceeded()
             return True
 
     def check_and_add_usage(
@@ -210,7 +427,9 @@ class CostTracker:
             Cost of this call in AUD
 
         Raises:
-            BudgetExceededError: If this call would exceed the budget
+            BudgetExceededError: If this call takes the total to the spend
+                limit (see spend_limit_aud). The call is recorded first: it has
+                already run and been billed.
         """
         with self._lock:
             # Calculate cost for this call
@@ -220,12 +439,6 @@ class CostTracker:
             call_cost_usd = input_cost + output_cost
             call_cost_aud = call_cost_usd * USD_TO_AUD
 
-            # Check if this call would exceed budget BEFORE adding
-            projected_total_aud = self.total_cost_aud + call_cost_aud
-            if projected_total_aud >= self.budget_aud:
-                raise BudgetExceededError(projected_total_aud, self.budget_aud)
-
-            # Safe to add - budget check passed
             if agent not in self.agent_usage:
                 self.agent_usage[agent] = AgentUsage(agent_name=agent, model=model)
             self.agent_usage[agent].add_usage(input_tokens, output_tokens, model)
@@ -239,6 +452,9 @@ class CostTracker:
             # Persist if path is set
             if self.persist_path:
                 self._save()
+
+            if self.total_cost_aud >= self.spend_limit_aud:
+                raise self._exceeded()
 
             return call_cost_aud
 
@@ -302,10 +518,21 @@ class CostTracker:
 
     def get_summary(self) -> dict:
         """Get a summary of all costs."""
+        with self._lock:
+            return self._summary_locked()
+
+    def _summary_locked(self) -> dict:
+        uncertain = [r for r in self._reservations.values() if r["state"] == "uncertain"]
+        unconfirmed_cost = sum(r["cost_aud"] for r in uncertain)
         return {
             "budget_aud": self.budget_aud,
-            "total_cost_aud": round(self.total_cost_aud, 4),
-            "total_cost_usd": round(self.total_cost_usd, 4),
+            "total_cost_aud": round(self.total_cost_aud + unconfirmed_cost, 4),
+            "total_cost_usd": round(self.total_cost_usd + unconfirmed_cost / USD_TO_AUD, 4),
+            "confirmed_cost_aud": round(self.total_cost_aud, 4),
+            "unconfirmed_cost_aud": round(unconfirmed_cost, 4),
+            "unconfirmed_calls": len(uncertain),
+            "pending_cost_aud": round(sum(r["cost_aud"] for r in self._reservations.values()
+                                          if r["state"] == "pending"), 4),
             "budget_remaining_aud": round(self.budget_remaining_aud, 4),
             "budget_percentage_used": round(self.budget_percentage_used, 2),
             "total_calls": self.total_calls,
@@ -365,6 +592,7 @@ class CostTracker:
             "total_output_tokens": self.total_output_tokens,
             "total_calls": self.total_calls,
             "started_at": self.started_at,
+            "reservations": self._reservations,
             "agent_usage": {
                 name: asdict(usage)
                 for name, usage in self.agent_usage.items()
@@ -392,6 +620,10 @@ class CostTracker:
         self.total_output_tokens = data.get("total_output_tokens", 0)
         self.total_calls = data.get("total_calls", 0)
         self.started_at = data.get("started_at", self.started_at)
+        # No coroutine from the old process can settle a restored request.
+        self._reservations = data.get("reservations", {})
+        for request in self._reservations.values():
+            request["state"] = "uncertain"
 
         for name, usage_data in data.get("agent_usage", {}).items():
             self.agent_usage[name] = AgentUsage(**usage_data)
@@ -404,6 +636,7 @@ class CostTracker:
             self.total_input_tokens = 0
             self.total_output_tokens = 0
             self.total_calls = 0
+            self._reservations = {}
             self.started_at = datetime.now().isoformat()
 
             if self.persist_path:

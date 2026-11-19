@@ -21,6 +21,11 @@ class LLMClientError(CoScientistError):
     pass
 
 
+class RunTimeLimitError(CoScientistError):
+    """The run's absolute model-work deadline has been reached; never retry."""
+    pass
+
+
 class RetryableError(LLMClientError):
     """Raised for transient LLM errors that can be retried.
 
@@ -28,6 +33,19 @@ class RetryableError(LLMClientError):
     The retry mechanism should catch these and attempt again with backoff.
     """
     pass
+
+
+class ContentFilteredError(LLMClientError):
+    """The model's built-in safety filter returned stopReason=content_filtered.
+
+    Deterministic for a given prompt, so it is never retried. agent and model
+    name the blocked call for the run's error message.
+    """
+
+    def __init__(self, message: str, *, agent: str | None = None, model: str | None = None):
+        super().__init__(message)
+        self.agent = agent
+        self.model = model
 
 
 class LLMTimeoutError(RetryableError):
@@ -60,4 +78,13 @@ class ValidationError(CoScientistError):
 
 class CheckpointError(CoScientistError):
     """Raised when checkpoint save/load fails"""
+    pass
+
+
+class RunAbortedError(CoScientistError):
+    """Raised when the supervisor ends a run that produced no hypotheses.
+
+    str() is the user-facing reason: aws_entrypoint.py stores it as the run's
+    error_message and puts it in the failure email.
+    """
     pass

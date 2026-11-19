@@ -10,7 +10,7 @@ This client wraps the LangChain Google Generative AI integration with:
 from langchain_google_genai import ChatGoogleGenerativeAI
 from src.llm.base import BaseLLMClient
 from src.config import settings
-from src.utils.errors import LLMClientError
+from src.utils.errors import LLMClientError, RunTimeLimitError
 from src.utils.retry import retry_async, sync_retry, is_retryable_error
 from src.observability.tracing import trace_llm_call
 import structlog
@@ -35,7 +35,7 @@ class GoogleGeminiClient(BaseLLMClient):
         """Initialize Google Gemini client.
 
         Args:
-            model: Model name (e.g., 'gemini-3-pro-preview').
+            model: Model name (e.g., 'gemini-4-argon').
             agent_name: Name of the agent using this client (for cost tracking).
             thinking_budget: Cap on reasoning tokens. 0 disables reasoning for
                 JSON-structured tasks (ranking, proximity). None = unconstrained.
@@ -44,6 +44,7 @@ class GoogleGeminiClient(BaseLLMClient):
         super().__init__(model, cost_tracker)
 
         self.agent_name = agent_name
+        self.max_output_tokens = 16384
         # Prefer env var (set per-request by API middleware) over frozen settings
         import os
         api_key = os.environ.get("GOOGLE_API_KEY") or settings.google_api_key
@@ -51,7 +52,10 @@ class GoogleGeminiClient(BaseLLMClient):
             "model": model,
             "google_api_key": api_key,
             "temperature": 0.7,
-            "max_output_tokens": 8192,
+            # Output includes thinking tokens: Gemini 3.1 Pro generation calls
+            # already averaged ~6.6k, so 8192 left Gemini 4 Argon no margin.
+            "max_output_tokens": self.max_output_tokens,
+            "max_retries": 0,  # each retry must obtain its own budget reservation
             "callbacks": self.callbacks,
         }
         if thinking_budget is not None:
@@ -97,31 +101,29 @@ class GoogleGeminiClient(BaseLLMClient):
     def _extract_usage(self, response, prompt: str, content: str) -> tuple[int, int]:
         """Return (input_tokens, output_tokens) for billing.
 
-        Prefers SDK-reported counts from response.usage_metadata. For Gemini,
-        thinking/reasoning tokens are billed as output but live in a separate
-        field (thoughts_token_count or output_token_details.reasoning) — we
-        add them so the tracker matches Google's actual billing. Falls back
-        to the word-count estimator only if usage_metadata is unavailable.
+        Prefers SDK-reported counts from response.usage_metadata, whose
+        output_tokens already include thinking tokens (langchain-google-genai
+        sets output_tokens = candidates + thoughts; output_token_details.reasoning
+        is a breakdown of that total, not an extra amount). Only the raw
+        metadata fallback, where candidates_token_count excludes thoughts, adds
+        thoughts_token_count. Falls back to the word-count estimator only if no
+        usage is available.
         """
         in_tok = out_tok = None
         reasoning_tok = 0
 
         usage = getattr(response, "usage_metadata", None)
         if isinstance(usage, dict):
-            in_tok = usage.get("input_tokens") or usage.get("prompt_tokens")
-            out_tok = usage.get("output_tokens") or usage.get("completion_tokens")
-            details = usage.get("output_token_details") or {}
-            if isinstance(details, dict):
-                reasoning_tok = int(details.get("reasoning") or details.get("thoughts") or 0)
+            in_tok = self._usage_value(usage, "input_tokens", "prompt_tokens")
+            out_tok = self._usage_value(usage, "output_tokens", "completion_tokens")
 
         meta = getattr(response, "response_metadata", None) or {}
         raw = meta.get("usage_metadata") if isinstance(meta, dict) else None
         if isinstance(raw, dict):
             if in_tok is None:
-                in_tok = raw.get("prompt_token_count") or raw.get("input_token_count")
+                in_tok = self._usage_value(raw, "prompt_token_count", "input_token_count")
             if out_tok is None:
-                out_tok = raw.get("candidates_token_count") or raw.get("output_token_count")
-            if not reasoning_tok:
+                out_tok = self._usage_value(raw, "candidates_token_count", "output_token_count")
                 reasoning_tok = int(raw.get("thoughts_token_count") or 0)
 
         if in_tok is None or out_tok is None:
@@ -130,12 +132,18 @@ class GoogleGeminiClient(BaseLLMClient):
         return int(in_tok), int(out_tok) + reasoning_tok
 
     def _do_invoke(self, prompt: str):
-        response = self.llm.invoke(prompt)
-        return self._extract_content(response), response
+        with self._budgeted_request(prompt, self.max_output_tokens) as reservation:
+            response = self.llm.invoke(prompt, timeout=self._request_timeout(settings.llm_timeout_seconds))
+            content = self._extract_content(response)
+            self._settle_response(reservation, response, prompt, content)
+            return content, response
 
     async def _do_ainvoke(self, prompt: str):
-        response = await self.llm.ainvoke(prompt)
-        return self._extract_content(response), response
+        with self._budgeted_request(prompt, self.max_output_tokens) as reservation:
+            response = await self.llm.ainvoke(prompt, timeout=self._request_timeout(settings.llm_timeout_seconds))
+            content = self._extract_content(response)
+            self._settle_response(reservation, response, prompt, content)
+            return content, response
 
     def invoke(self, prompt: str) -> str:
         """Invoke Gemini synchronously with retry and cost tracking.
@@ -151,21 +159,18 @@ class GoogleGeminiClient(BaseLLMClient):
             LLMClientError: If invocation fails after all retries.
         """
         try:
+            # Refused before the call once the spend limit is reached
+            self.cost_tracker.ensure_budget_available()
             # Use sync retry wrapper
             content, response = sync_retry(
                 self._do_invoke,
                 prompt,
-                operation_name=f"Gemini invoke ({self.agent_name})"
+                operation_name=f"Gemini invoke ({self.agent_name})",
+                remaining_time=self.cost_tracker.remaining_run_seconds,
             )
 
             input_tokens, output_tokens = self._extract_usage(response, prompt, content)
 
-            self.cost_tracker.check_and_add_usage(
-                agent=self.agent_name,
-                model=self.model,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens
-            )
 
             logger.debug(
                 "gemini_invoke_success",
@@ -176,7 +181,7 @@ class GoogleGeminiClient(BaseLLMClient):
 
             return content
 
-        except BudgetExceededError:
+        except (BudgetExceededError, RunTimeLimitError):
             # Re-raise budget errors without wrapping
             raise
 
@@ -217,22 +222,18 @@ class GoogleGeminiClient(BaseLLMClient):
             LLMClientError: If invocation fails for other reasons.
         """
         try:
+            # Refused before the call once the spend limit is reached
+            self.cost_tracker.ensure_budget_available()
             # Use async retry wrapper with timeout
-            content, response = await retry_async(
+            content, response = await self._within_run_time(retry_async(
                 self._do_ainvoke,
                 prompt,
                 timeout=settings.llm_timeout_seconds,
                 operation_name=f"Gemini ainvoke ({self.agent_name})"
-            )
+            ))
 
             input_tokens, output_tokens = self._extract_usage(response, prompt, content)
 
-            self.cost_tracker.check_and_add_usage(
-                agent=self.agent_name,
-                model=self.model,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens
-            )
 
             logger.debug(
                 "gemini_ainvoke_success",
@@ -243,7 +244,7 @@ class GoogleGeminiClient(BaseLLMClient):
 
             return content
 
-        except BudgetExceededError:
+        except (BudgetExceededError, RunTimeLimitError):
             # Re-raise budget errors without wrapping
             raise
 

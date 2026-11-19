@@ -450,6 +450,10 @@ class AsyncStorageAdapter:
         """Get research overview for a research goal."""
         return self._research_overviews.get(goal_id)
 
+    async def clear_research_overview(self, goal_id: str) -> None:
+        """Invalidate a synthesis before final review state is reevaluated."""
+        self._research_overviews.pop(goal_id, None)
+
     # =========================================================================
     # Observation Reviews (Phase 6 Week 3)
     # =========================================================================

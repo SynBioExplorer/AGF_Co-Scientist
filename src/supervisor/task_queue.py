@@ -73,6 +73,15 @@ class TaskQueue:
             queue_size=len(self._queue)
         )
 
+    def register_task(self, task: AgentTask) -> None:
+        """Track a task that is dispatched at once, without queueing it.
+
+        update_task_status and the statistics see it, get_next_task never
+        returns it: a queued copy stays pending until it runs, so the next
+        get_next_task would hand it out a second time.
+        """
+        self._tasks[task.id] = task
+
     def get_next_task(
         self,
         agent_type: Optional[AgentType] = None

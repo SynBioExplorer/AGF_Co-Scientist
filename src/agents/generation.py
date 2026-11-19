@@ -27,8 +27,49 @@ from src.storage.cache import RedisCache
 # Phase 6: Evidence quality enhancement imports
 from src.literature.quality_scorer import PaperQualityScorer
 from src.literature.limitations_extractor import LimitationsExtractor
+from src.tools.semantic_scholar import PaperNotFoundError
 import json
 import hashlib
+import html
+import unicodedata
+
+
+def _model_citation(data: dict) -> Citation:
+    """A citation from the model's reply, with only the fields the model
+    writes: verification_status and canonical_title are the DOI check's, and
+    a reply that sets them would otherwise pass as checked."""
+    return Citation(**{k: v for k, v in data.items()
+                       if k in ("title", "authors", "year", "doi", "url", "relevance")})
+
+
+def _normalize_doi(doi: Optional[str]) -> str:
+    """A DOI in the bare, lower-case form (DOIs are case-insensitive)."""
+    doi = re.sub(r'^(?:https?://(?:dx\.)?doi\.org/|doi:\s*)', '', (doi or '').strip(),
+                 flags=re.IGNORECASE)
+    return doi.lower()
+
+
+def _title_words(title: Optional[str]) -> tuple[str, ...]:
+    """Normalize typesetting, preserving every word and its order.
+
+    Short gene names, negation, numbers and direction words identify the paper.
+    A bag-of-words similarity threshold can accept the opposite scientific claim.
+    """
+    text = html.unescape(re.sub(r"<[^>]*>", "", title or ""))
+    text = unicodedata.normalize("NFKC", text).casefold()
+    return tuple(re.findall(r"[^\W_]+", text))
+
+
+def _titles_match(claimed: Optional[str], canonical: Optional[str]) -> bool:
+    """Only typesetting-equivalent titles establish identity.
+
+    A shortened or paraphrased title remains a visible mismatch until reconciled
+    with authoritative metadata. Identity is not a judgment of claim support.
+    """
+    a, b = _title_words(claimed), _title_words(canonical)
+    if not a or not b:
+        return False
+    return a == b
 
 
 class GenerationAgent(BaseAgent):
@@ -61,6 +102,15 @@ class GenerationAgent(BaseAgent):
         self.limitations_extractor = LimitationsExtractor(
             min_confidence=settings.limitations_min_confidence
         )
+
+        # The retrieval is a search for the research goal, the same for every
+        # generation task of a run: done once per goal, then reused.
+        self._literature_by_goal: Dict[str, Tuple[str, CitationGraph]] = {}
+
+    def literature_graph(self, goal_id: str) -> Optional[CitationGraph]:
+        """The retrieved evidence used by generation, shared with later reviews."""
+        cached = self._literature_by_goal.get(goal_id)
+        return cached[1] if cached else None
 
     def _enrich_papers_with_quality(
         self,
@@ -295,13 +345,18 @@ class GenerationAgent(BaseAgent):
 
                 tasks = [
                     expander.expand_from_paper(
-                        paper_id=paper.get("doi") or paper.get("pmid") or paper.get("paperId"),
+                        # Semantic Scholar resolves a bare DOI, but a PMID only as
+                        # "PMID:<id>"; its own results carry the ID as paper_id
+                        paper_id=(paper.get("doi")
+                                  or (f"PMID:{paper['pmid']}" if paper.get("pmid") else None)
+                                  or paper.get("paper_id") or paper.get("paperId")),
                         strategy=ExpansionStrategy.BACKWARD,
                         max_depth=max_depth,
                         limit_per_direction=10
                     )
                     for paper in top_papers
-                    if paper.get("doi") or paper.get("pmid") or paper.get("paperId")
+                    if paper.get("doi") or paper.get("pmid") or paper.get("paper_id")
+                    or paper.get("paperId")
                 ]
 
                 if tasks:
@@ -384,7 +439,11 @@ class GenerationAgent(BaseAgent):
                 reverse=True
             )[:max_papers]
 
-        context_parts = ["**Citation Network Analysis:**\n"]
+        # The score ranks papers by citation count, recency and venue: a way
+        # to find papers, not a measure of their evidence or relevance.
+        context_parts = ["**Citation Network Analysis:** (DISCOVERY RANK combines citation "
+                         "count, recency and venue; it is not a measure of evidence quality "
+                         "or of relevance to the goal)\n"]
 
         paper_num = 0
         for paper in papers:
@@ -403,7 +462,7 @@ class GenerationAgent(BaseAgent):
 
             context_parts.append(
                 f"\n**Paper {paper_num}:** {paper.title}\n"
-                f"[QUALITY: {quality_label}]\n"
+                f"[DISCOVERY RANK: {quality_label}]\n"
                 f"Authors: {', '.join(paper.authors[:3])}{'...' if len(paper.authors) > 3 else ''}\n"
                 f"Year: {paper.year or 'N/A'}\n"
                 f"DOI: {paper.doi or 'N/A'}\n"
@@ -596,7 +655,7 @@ methodological / convenience assumptions)."""
                 phased_milestones=protocol_data.get("phased_milestones", []) or [],
             ),
             literature_citations=[
-                Citation(**c) for c in data.get("citations", [])
+                _model_citation(c) for c in data.get("citations", [])
                 if isinstance(c, dict) and "title" in c
             ],
             # B7 fix (Tier 4): populate assumptions[] from the LLM response,
@@ -785,7 +844,7 @@ hypothesis outright, false for methodological / convenience assumptions)."""
             mechanism=data.get("mechanism", ""),
             experimental_protocol=ExperimentalProtocol(**protocol_data),
             literature_citations=[
-                Citation(**c) for c in data.get("citations", [])
+                _model_citation(c) for c in data.get("citations", [])
                 if isinstance(c, dict) and c.get("title")
             ],
             # B7 fix (Tier 4): populate assumptions[] from the LLM response,
@@ -933,7 +992,7 @@ methodological / convenience assumptions)."""
                 phased_milestones=protocol_data.get("phased_milestones", []) or [],
             ),
             literature_citations=[
-                Citation(**c) for c in data.get("citations", [])
+                _model_citation(c) for c in data.get("citations", [])
                 if isinstance(c, dict) and c.get("title")
             ],
             # B7 fix (Tier 4): populate assumptions[] from the LLM response,
@@ -975,11 +1034,14 @@ methodological / convenience assumptions)."""
         Args:
             research_goal: Research goal to address
             method: Generation method (literature or debate)
-            use_literature_expansion: Whether to use literature tools + citation expansion
+            use_literature_expansion: Whether to use literature tools + citation
+                expansion and check the citations' DOIs; never with
+                settings.enable_web_search off
 
         Returns:
             Generated Hypothesis
         """
+        use_literature_expansion = use_literature_expansion and settings.enable_web_search
 
         self.log_execution(
             task="hypothesis_generation",
@@ -993,7 +1055,10 @@ methodological / convenience assumptions)."""
         limitations_context = ""
         citation_graph = CitationGraph()  # Initialize empty graph
 
-        if use_literature_expansion:
+        cached = self._literature_by_goal.get(research_goal.id) if use_literature_expansion else None
+        if cached is not None:
+            literature_context, citation_graph = cached
+        elif use_literature_expansion:
             try:
                 # Try structured literature tools first
                 search_results, citation_graph = await self._search_literature_tools(
@@ -1038,6 +1103,11 @@ methodological / convenience assumptions)."""
                     error=str(e)
                 )
                 literature_context = self._search_tavily_fallback(research_goal)
+
+            # Kept only when it found something, so a failed retrieval is
+            # tried again by the next task
+            if literature_context:
+                self._literature_by_goal[research_goal.id] = (literature_context, citation_graph)
 
         # Route to iterative assumptions pathway if requested
         if method == GenerationMethod.ITERATIVE_ASSUMPTIONS:
@@ -1207,7 +1277,7 @@ field outside the schema above. Do not omit any field shown in the schema."""
                         }
                     ),
                     literature_citations=[
-                        Citation(**c) for c in data.get("citations", [])
+                        _model_citation(c) for c in data.get("citations", [])
                         if isinstance(c, dict) and c.get("title")
                     ],
                     # B7 fix: populate assumptions[] from the LLM response. Each
@@ -1283,9 +1353,13 @@ field outside the schema above. Do not omit any field shown in the schema."""
         citation_graph: CitationGraph
     ) -> Hypothesis:
         """
-        Validate and enrich hypothesis citations.
+        Check each citation's DOI identity and drop retracted papers.
 
-        Phase 6 enhancement: Also checks retraction status.
+        Sets Citation.verification_status (see schemas.Citation) and, when
+        the DOI resolves, canonical_title: the paper the DOI is, from the
+        citation graph or Semantic Scholar. A title that does not match it is
+        a title_mismatch: the model's title and relevance are kept, so the
+        report and reviewers can show what was claimed and what the DOI is.
 
         Args:
             hypothesis: Generated hypothesis
@@ -1301,50 +1375,57 @@ field outside the schema above. Do not omit any field shown in the schema."""
         semantic_tool = self.tool_registry.get("semantic_scholar")
 
         for citation in hypothesis.literature_citations:
-            # Check if DOI exists in citation graph
-            doi_in_graph = False
+            doi = _normalize_doi(citation.doi)
             is_retracted = False
+            canonical_title = None
+            status = "no_identifier" if not doi else "not_checked"
 
-            if citation.doi:
-                for node in citation_graph.nodes.values():
-                    if node.doi == citation.doi:
-                        doi_in_graph = True
-                        # Enrich with graph data
-                        citation.title = citation.title or node.title
-
-                        # Phase 6: Check retraction status
-                        if getattr(node, 'is_retracted', False):
-                            is_retracted = True
-                            self.logger.warning(
-                                "Citation references retracted paper",
-                                citation_title=citation.title,
-                                doi=citation.doi
-                            )
-                        break
-
-            # If not in graph and we have Semantic Scholar, fetch it
-            if not doi_in_graph and citation.doi and semantic_tool:
+            node = next((n for n in citation_graph.nodes.values()
+                         if doi and _normalize_doi(n.doi) == doi), None)
+            if node is not None:
+                canonical_title = node.title
+                citation.title = citation.title or node.title
+                # Phase 6: Check retraction status
+                if getattr(node, 'is_retracted', False):
+                    is_retracted = True
+                    self.logger.warning(
+                        "Citation references retracted paper",
+                        citation_title=citation.title,
+                        doi=citation.doi
+                    )
+            elif doi and semantic_tool:
+                # Not in the graph: ask Semantic Scholar what the DOI is
                 try:
-                    paper = await semantic_tool.get_paper(f"DOI:{citation.doi}")
-                    if paper:
-                        # Add to graph for future use
-                        citation_graph.add_paper(
-                            paper_id=paper.paper_id,
-                            title=paper.title,
-                            authors=paper.authors,
-                            year=paper.year,
-                            doi=paper.doi
-                        )
-                        self.logger.info(
-                            "Citation validated and added to graph",
-                            doi=citation.doi
-                        )
+                    paper = await semantic_tool.get_paper(f"DOI:{doi}")
+                    if paper is None:
+                        raise PaperNotFoundError(f"Paper not found: DOI:{doi}")
+                    canonical_title = paper.title
+                    citation_graph.add_paper(
+                        paper_id=paper.paper_id,
+                        title=paper.title,
+                        authors=paper.authors,
+                        year=paper.year,
+                        doi=paper.doi
+                    )
+                except PaperNotFoundError:
+                    status = "unresolved"
                 except Exception as e:
+                    status = "lookup_failed"
                     self.logger.warning(
                         "Could not validate citation",
                         doi=citation.doi,
                         error=str(e)
                     )
+
+            if canonical_title:
+                citation.canonical_title = canonical_title
+                status = ("verified" if _titles_match(citation.title, canonical_title)
+                          else "title_mismatch")
+                if status == "title_mismatch":
+                    self.logger.warning("Citation DOI is a different paper", doi=citation.doi,
+                                        claimed_title=citation.title[:120],
+                                        canonical_title=canonical_title[:120])
+            citation.verification_status = status
 
             # Only include non-retracted citations
             if not is_retracted:
