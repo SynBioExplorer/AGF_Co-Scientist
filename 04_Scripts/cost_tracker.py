@@ -105,12 +105,12 @@ MODEL_PRICING = {
     "openai.gpt-6-luna":           {"input": 0.10,  "output": 0.50},
     "moonshotai.kimi-k3":          {"input": 3.00,  "output": 15.00},
 
-    # Anthropic Claude (via Bedrock) — same pricing as direct API.
+    # Anthropic Claude (via Bedrock): same pricing as direct API.
     # Verified via list-foundation-models on 2026-05-05; ap-southeast-2.
     # Opus 4.7 = Pro tier (generation/evolution/meta-review)
     # Sonnet 4.6 = Flash tier (reflection/ranking/supervisor)
-    # No Haiku — AGF policy: keep all agents on Sonnet 4.6 or above.
-    # Opus 4.7 / Sonnet 4.6 are INFERENCE_PROFILE-only on Bedrock — must be
+    # No Haiku (AGF policy): keep all agents on Sonnet 4.6 or above.
+    # Opus 4.7 / Sonnet 4.6 are INFERENCE_PROFILE-only on Bedrock, so they must be
     # invoked via cross-region profile (au.* in ap-southeast-2). Pricing is the
     # same as the underlying foundation model. Both forms keyed for safety.
     "au.anthropic.claude-opus-4-7":              {"input": 15.00, "output": 75.00},
@@ -125,27 +125,27 @@ MODEL_PRICING = {
     "anthropic.claude-sonnet-4-5-20250929-v1:0": {"input": 3.00,  "output": 15.00},
     "anthropic.claude-3-5-sonnet-20241022-v2:0": {"input": 3.00,  "output": 15.00},
 
-    # DeepSeek (via Bedrock) — only V3.x available in ap-southeast-2 (no R1).
+    # DeepSeek (via Bedrock): only V3.x available in ap-southeast-2 (no R1).
     "deepseek.v3.2":      {"input": 0.27, "output": 1.10},
     "deepseek.v3-v1:0":   {"input": 0.27, "output": 1.10},  # V3.1
 
-    # OpenAI GPT-OSS (via Bedrock — open-source models hosted on Bedrock)
+    # OpenAI GPT-OSS (via Bedrock; open-source models hosted on Bedrock)
     # 120B = Pro tier; 20B = Flash tier. Note: id suffix is `-1:0`, not `-v1:0`.
     "openai.gpt-oss-120b-1:0": {"input": 1.50, "output": 6.00},
     "openai.gpt-oss-20b-1:0":  {"input": 0.20, "output": 0.80},
 
-    # Moonshot Kimi (via Bedrock) — official ap-southeast-2 rates.
+    # Moonshot Kimi (via Bedrock): official ap-southeast-2 rates.
     # K2 Thinking = Pro tier (generation/evolution/meta-review).
     # K2.5        = Flash tier (reflection/ranking/supervisor).
     "moonshot.kimi-k2-thinking": {"input": 0.6180, "output": 2.5750},
     "moonshotai.kimi-k2.5":      {"input": 0.6180, "output": 3.0900},
 
-    # Mistral (via Bedrock) — published rates ap-southeast-2.
+    # Mistral (via Bedrock): published rates ap-southeast-2.
     "mistral.mistral-large-2402-v1:0":    {"input": 4.00, "output": 12.00},
     "mistral.mixtral-8x7b-instruct-v0:1": {"input": 0.45, "output": 0.70},
     "mistral.mistral-7b-instruct-v0:2":   {"input": 0.15, "output": 0.20},
 
-    # NVIDIA Nemotron (via Bedrock) — newer to ap-southeast-2.
+    # NVIDIA Nemotron (via Bedrock): newer to ap-southeast-2.
     # Published Bedrock pricing for older Nemotron Super 49B was $0.92/$3.68.
     # The 3.x family rates below are best-effort estimates aligned to model
     # size; refine if AWS publishes official figures (the cost reporter uses

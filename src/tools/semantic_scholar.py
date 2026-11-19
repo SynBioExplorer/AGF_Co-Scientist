@@ -66,7 +66,7 @@ class SemanticScholarTool(BaseTool):
         self.api_key = api_key
         self.base_url = "https://api.semanticscholar.org/graph/v1"
 
-        # Rate limiting — Semantic Scholar's free tier (with or without an API
+        # Rate limiting: Semantic Scholar's free tier (with or without an API
         # key) is 1 request/sec steady-state. Earlier code assumed 100 r/s with
         # a key, which would 429-storm the API. Bump only if AGF upgrades to a
         # paid tier with a confirmed higher rate.
@@ -479,7 +479,7 @@ def register_semantic_scholar_tool():
 
     Reads the API key from settings.semantic_scholar_api_key (env var
     SEMANTIC_SCHOLAR_API_KEY, mapped from Secrets Manager via the ECS task
-    definition). Falls back to anonymous mode if the field is None — same
+    definition). Falls back to anonymous mode if the field is None; same
     1 r/s rate either way; the key just gives us a dedicated lane.
     """
     from src.tools.registry import registry

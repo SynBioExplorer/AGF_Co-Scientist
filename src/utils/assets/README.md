@@ -2,7 +2,7 @@
 
 Drop `AusGenome_LOGO_MAIN.png` (the master 1024+ px PNG, transparent
 background) into this directory. It will be base64-inlined into every
-generated HTML report by `src/utils/html_report.py` — no external file
+generated HTML report by `src/utils/html_report.py`, so there is no external file
 dependency at view time.
 
 Lookup order (first hit wins):
