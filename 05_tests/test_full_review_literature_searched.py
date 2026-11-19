@@ -11,6 +11,10 @@ Fix: in the FULL branch of execute(), derive up to
 statement / mechanism and record them on Review.literature_searched. The
 field then documents what was (or should be) checked, even when the actual
 network call is skipped — eliminating the "100% empty" symptom.
+
+Update (deployed version): the ``full_review_max_queries`` setting was removed and the
+recorded queries now come from the refutation-search status, so only the propagation
+of ``literature_searched`` is asserted here.
 """
 
 import inspect
@@ -34,9 +38,6 @@ def test_full_review_derives_literature_search_queries():
     assert "literature_searched_queries" in src, (
         "B8 regression: literature_searched_queries variable is missing."
     )
-    assert "full_review_max_queries" in src, (
-        "B8 regression: configurable query cap setting not referenced."
-    )
 
 
 def test_review_constructor_threads_literature_searched():
@@ -47,19 +48,7 @@ def test_review_constructor_threads_literature_searched():
     )
 
 
-def test_config_has_full_review_max_queries_setting():
-    """The new ``full_review_max_queries`` setting was added with a sensible default."""
-    from src.config import settings
-
-    assert hasattr(settings, "full_review_max_queries"), (
-        "B8 regression: settings.full_review_max_queries missing."
-    )
-    assert isinstance(settings.full_review_max_queries, int)
-    assert settings.full_review_max_queries >= 1
-
-
 if __name__ == "__main__":
     test_full_review_derives_literature_search_queries()
     test_review_constructor_threads_literature_searched()
-    test_config_has_full_review_max_queries_setting()
     print("✓ B8 tests passed")
