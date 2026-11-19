@@ -56,6 +56,7 @@ dependencies:
     - langchain-anthropic      # Claude integration
     - langchain-google-genai   # Gemini integration
     - langchain-openai         # OpenAI integration
+    - langchain-aws>=0.2       # AWS Bedrock integration (src/llm/bedrock.py)
     - litellm                  # Unified LLM interface (optional)
 
     # Search & RAG
@@ -79,6 +80,9 @@ dependencies:
 
     # Observability
     - langsmith>=0.1.0         # LLM tracing and debugging
+
+    # AWS SDK (Bedrock client and retry classification: src/llm/bedrock.py, src/utils/retry.py)
+    - boto3>=1.34
 
     # Utilities
     - python-dotenv
