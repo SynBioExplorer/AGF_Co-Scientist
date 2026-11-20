@@ -128,6 +128,15 @@ The iteration loop stops at the budget less the finalisation reserve (`FINALIZAT
 
 The tracker is a process-wide singleton saved to `data/cost_tracking.json` relative to the working directory. A new process loads that file, including the budget stored in it, so spend carries over between local runs until the file is deleted. The API replaces the tracker's budget for the duration of a run when the request sets `budget_aud`.
 
+## LLM providers
+
+`src/llm/factory.py` builds each agent's client from `LLM_PROVIDER` and the per-agent overrides; [configuration.md](configuration.md) lists the default models.
+
+- Gemini runs through `langchain-google-genai` (`src/llm/google.py`), OpenAI through `langchain-openai` (`src/llm/openai.py`), and AWS Bedrock through the Converse API of `langchain-aws` (`src/llm/bedrock.py`), with credentials from the standard AWS chain.
+- On Bedrock, Claude Opus 4.8 serves generation, evolution and meta-review by default, and Claude Sonnet 5 the other agents.
+- Generation, reflection, ranking, evolution, meta-review and the supervisor can each be given their own provider and model through `<AGENT>_PROVIDER_OVERRIDE` and `<AGENT>_MODEL_OVERRIDE`.
+- All three clients reserve budget before each request and share the retry layer described below.
+
 ## Failure handling
 
 - Each LLM call has a timeout of `LLM_TIMEOUT_SECONDS` (300; at least 900 for Bedrock) and is retried with exponential backoff (`LLM_MAX_RETRIES=3`, base delay 1 s, capped at 30 s) when the error is transient (`src/utils/retry.py`). No other retry layer is active: all three clients switch off the retries of LangChain or botocore, so that every attempt takes its own budget reservation.
@@ -137,6 +146,36 @@ The tracker is a process-wide singleton saved to `data/cost_tracking.json` relat
 ## Storage and checkpoints
 
 Both entry points keep runs in memory (`AsyncStorageAdapter` in `src/storage/async_adapter.py`). `STORAGE_BACKEND` (`memory`, `postgres`, or `cached` for PostgreSQL with Redis) is read only by `get_storage` in `src/storage/factory.py`, which neither entry point calls. A `ContextMemory` checkpoint is saved after every iteration and once more at the end. `resume_from_checkpoint` restores the context memory and explored directions but then calls `execute`, which restarts the iteration count and the seed tasks; with the in-memory back end, checkpoints do not outlive the process.
+
+## Interfaces and outputs
+
+### HTML report
+
+`src/utils/html_report.py` turns a run JSON into one HTML file with summary tiles, an Elo distribution chart, the research overview, and hypothesis cards that can be filtered by theme and generation method and sorted. Each card shows the hypothesis's readiness and the checks it still needs. The logo is embedded, but Plotly and the fonts load from CDNs, so the chart needs a network connection. To label themes, the report asks the meta-review model to group the hypotheses: one LLM call, skipped when the budget is spent or the run failed, with keyword matching as the fallback.
+
+### API
+
+`src/api/main.py` is a FastAPI app; interactive documentation is served at `/docs`. Run options for `POST /goals` are listed in [configuration.md](configuration.md#api-run-options).
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Storage check |
+| `POST /goals` | Submit a goal and start a run in the background |
+| `GET /goals/{goal_id}`, `GET /goals/{goal_id}/tasks` | Run status, hypothesis and match counts, background tasks; the iteration fields are fixed at 0 and 20 |
+| `GET /goals/{goal_id}/hypotheses` | Hypotheses, paginated, sorted by Elo, creation time or title, or sampled across clusters; the `min_elo` filter defaults to 1200, which hides hypotheses rated below the starting value |
+| `GET /hypotheses/{hypothesis_id}` | One hypothesis with its reviews, match record and parents |
+| `POST /hypotheses/{hypothesis_id}/feedback` | Store scientist feedback, which no agent reads |
+| `GET /goals/{goal_id}/stats` | Counts and a convergence score computed from the top five ratings |
+| `GET /goals/{goal_id}/overview` | After the run completes, up to five top-rated hypotheses with win rates; it neither applies the readiness gate nor returns the stored research overview |
+| `POST /tasks/{task_id}/cancel`, `GET /tasks/{task_id}` | Cancel or inspect a background task |
+| `/api/v1/chat`, `/api/v1/chat/{goal_id}/...` | Chat about a goal, its history, and explanations of single hypotheses |
+| `/api/v1/tools`, `/api/v1/tools/pubmed/search` | List the literature tools; search PubMed |
+| `/api/v1/documents/...` | Upload, list, search and delete PDFs, which no agent reads |
+| `GET /settings`, `PUT /settings` | The web interface's saved preferences |
+
+### Web interface
+
+`frontend/` is written in React 19 and TypeScript with Vite and Tailwind CSS: a dashboard with Elo and quality charts, a chat page that submits a goal and answers questions about it, a hypothesis list with detail views, and a settings page. [frontend/README.md](../frontend/README.md) covers running it and its caveats.
 
 ## Relation to the paper
 
