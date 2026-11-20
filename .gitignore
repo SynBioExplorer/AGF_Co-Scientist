@@ -9,6 +9,12 @@
 # Claude Code local settings
 .claude/
 
+# Local agent-orchestration state (contains absolute local paths)
+.orchestrator/
+.orchestration-state.json
+.task-status.json
+/tasks.yaml
+
 # Python
 __pycache__/
 *.py[cod]
