@@ -9,7 +9,7 @@ AGF Co-Scientist takes a research goal written in plain language and returns a r
 ```mermaid
 flowchart TD
     goal["Research goal<br/>description, constraints, preferences, laboratory context"]
-    plan["Supervisor turns the goal into evaluation criteria<br/>and queues three generation tasks"]
+    plan["Supervisor queues three generation tasks<br/>(two literature exploration, one debate)"]
     check{"Stop condition met?"}
     subgraph iteration [Each iteration]
         p1["Phase 1: Generation and Proximity"]
@@ -30,12 +30,25 @@ flowchart TD
     lit -.-> p2
 ```
 
-- The supervisor (`src/agents/supervisor.py`) runs its own asyncio loop. Tasks within a phase run concurrently, at most `MAX_WORKERS` (default 4) at a time. Each phase takes tasks per agent in proportion to the agent's weight, out of twelve slots per iteration, and the supervisor recomputes the weights from run statistics before every iteration (`src/supervisor/statistics.py`).
+- The supervisor (`src/agents/supervisor.py`) runs the iteration loop itself as asyncio tasks, not as a LangGraph graph. Tasks within a phase run concurrently, at most `MAX_WORKERS` (default 4) at a time. Each phase takes tasks per agent in proportion to the agent's weight, out of twelve slots per iteration, and the supervisor recomputes the weights from run statistics before every iteration (`src/supervisor/statistics.py`).
 - The loop ends when the budget is spent, the run reaches its time limit (6 hours), no LLM call succeeds for three iterations in a row (transient failures are waited out for at least 10 minutes), or the iteration limit (default 20) is reached. Elo convergence (0.9) or mean review quality (0.85) can also end it, but only after max(5, 0.7 × iteration limit) iterations, with at least six hypotheses, and once every hypothesis has played a match.
 - After 85% of the time limit only tournament matches are scheduled, so late hypotheses still get ranked.
 - The final overview considers only hypotheses that pass the readiness gate described below. Elo is not part of the gate.
 
-Reference detail on scheduling, reviews, the tournament and cost control is in [docs/architecture.md](docs/architecture.md).
+Reference detail on scheduling, reviews, the tournament and cost control, and a list of where this implementation differs from the paper, is in [docs/architecture.md](docs/architecture.md).
+
+## Limitations and security
+
+- Hypotheses are LLM output. Elo measures pairwise preference between model-written ideas, not correctness, and a hypothesis marked ready has passed automated checks, not experiments. A verified citation is a DOI that resolves to a paper with a matching title. Whether the paper supports the claim is judged only by the full-review LLM, from the title, the DOI and the stated relevance, not from the paper itself. The repository includes no benchmark or study of hypothesis quality. Everything needs expert review.
+- The safety screen for dual-use and biosafety risk is off by default (`SAFETY_THRESHOLD=0.0`). Switched on, it reviews each new and evolved hypothesis, but a hypothesis whose safety call fails or returns an unreadable reply is kept unscreened, and the research goal itself is never screened.
+- The API has no authentication. CORS allows any origin with credentials, so any web page open in the same browser can call a running server. API keys sent as request headers are written into the process-wide environment for the duration of the request. Run it on your own machine only.
+- The web interface keeps API keys in the browser's localStorage and sends them, with its provider choice, as request headers. These apply only while the API handles that request, and a run's agents can be created after it, so set keys and `LLM_PROVIDER` in `03_architecture/.env`. Its per-agent model choices are accepted by the API but not applied, and it offers only Gemini and OpenAI; use the environment variables for Bedrock and per-agent models.
+- Spend is saved to `data/cost_tracking.json` and reloaded by the next run started from the same directory, stored budget included. Delete that file to start a fresh budget. Prices in `04_Scripts/cost_tracker.py` are fixed in code and convert from USD at a fixed 1.55.
+- Bedrock needs your own AWS account with access to the chosen models, and the default Claude models are invoked through Australian (`au.`) inference profiles.
+- Storage is in memory: both entry points use `AsyncStorageAdapter`, so API results are lost when the server stops. PostgreSQL and Redis back ends exist in `src/storage/`, but neither entry point uses them and they were not tested for this revision.
+- Scientist feedback sent through the API is stored but no agent reads it. The document upload endpoints (`src/api/documents.py`) store PDFs, but no agent reads them and the web interface has no upload page.
+- Every match is a multi-turn debate, whereas the paper debates only top-ranked hypotheses and compares the rest in a single turn. There are no specialised-model tools such as AlphaFold.
+- `src/graphs/workflow.py` is an earlier LangGraph pipeline kept for the phase 2 and 3 tests; the supervisor does not use it.
 
 ## What is implemented
 
@@ -65,7 +78,7 @@ Reference detail on scheduling, reviews, the tournament and cost control is in [
 
 **Frontend.** React, TypeScript and Vite (`frontend/`): a dashboard with Elo and quality charts, a hypothesis list with detail views, a chat page and a settings page.
 
-**HTML report.** `scripts/run_batch.py` writes each run to `data/runs/` as JSON plus a self-contained HTML report (`src/utils/html_report.py`) with an Elo chart, hypothesis cards that can be filtered and sorted, each hypothesis's readiness and the checks it still needs.
+**HTML report.** `scripts/run_batch.py` writes each run to `data/runs/` as JSON plus an HTML report (`src/utils/html_report.py`) with an Elo chart, hypothesis cards that can be filtered and sorted, each hypothesis's readiness and the checks it still needs. The logo is embedded, but Plotly and the fonts load from CDNs, so the chart needs a network connection.
 
 ## Quick start
 
@@ -82,9 +95,10 @@ cp 03_architecture/.env.example 03_architecture/.env
 Edit `03_architecture/.env` before the first run:
 
 - Keep a `GOOGLE_API_KEY` line: `src/config.py` refuses to load without one, whichever provider you use. With Gemini it must be a real key; with OpenAI or Bedrock the placeholder is enough.
+- Set `LLM_PROVIDER=openai` or `LLM_PROVIDER=bedrock` unless you use Gemini. Bedrock takes credentials from the standard AWS chain.
 - Delete the placeholder lines for the other keys you do not have.
 - Set `LANGCHAIN_TRACING_V2=false` unless you have a LangSmith key.
-- The example pins model names that differ from the defaults in `src/config.py`; delete the `GOOGLE_*_MODEL` and `OPENAI_*_MODEL` lines to use the defaults.
+- The example pins older Gemini models; delete the `GOOGLE_*_MODEL` lines to use the defaults in `src/config.py`. The `OPENAI_*_MODEL` lines match the defaults.
 
 Run one goal from the command line (three iterations, a 15 AUD cap):
 
@@ -116,25 +130,12 @@ Settings are read from `03_architecture/.env` and the environment; [`03_architec
 | `GOOGLE_API_KEY` | none | Required for every provider (see above) |
 | `LLM_PROVIDER` | `google` | `google`, `openai` or `bedrock` |
 | `OPENAI_API_KEY` | none | For `LLM_PROVIDER=openai` |
-| `BUDGET_AUD` | `50.0` | Spend limit in AUD; a batch file's `budget_aud` replaces it |
+| `BUDGET_AUD` | `50.0` | Spend limit in AUD; a batch file's `budget_aud` replaces it unless `data/cost_tracking.json` already stores a budget |
 | `TAVILY_API_KEY` | none | Web search fallback for literature retrieval |
 | `BEDROCK_REGION` | `ap-southeast-2` | Region for Bedrock calls |
 | `SAFETY_THRESHOLD` | `0.0` | `0` switches the safety screen off |
 
 Per-agent overrides, Bedrock inference profiles, literature keys, storage back ends and run options are described in [docs/configuration.md](docs/configuration.md).
-
-## Limitations and security
-
-- Hypotheses are LLM output. Elo measures pairwise preference between model-written ideas, not correctness, and a hypothesis marked ready has passed automated checks, not experiments. Everything needs expert review.
-- The safety screen for dual-use and biosafety risk is off by default (`SAFETY_THRESHOLD=0.0`). Switched on, it reviews each new and evolved hypothesis; the research goal itself is never screened.
-- The API has no authentication. CORS allows any origin with credentials, so any web page open in the same browser can call a running server. API keys sent as request headers are written into the process-wide environment for the duration of the request. Run it on your own machine only.
-- The web interface keeps API keys in the browser's localStorage. Its per-agent model choices are accepted by the API but not applied, and it offers only Gemini and OpenAI; use the environment variables for Bedrock and per-agent models.
-- Spend is saved to `data/cost_tracking.json` and reloaded by the next run started from the same directory, stored budget included. Delete that file to start a fresh budget. Prices in `04_Scripts/cost_tracker.py` are fixed in code and convert from USD at a fixed 1.55.
-- Bedrock needs your own AWS account with access to the chosen models, and the default Claude models are invoked through Australian (`au.`) inference profiles.
-- Storage is in memory by default, so API results are lost when the server stops. PostgreSQL and Redis back ends exist (`src/storage/`) but were not tested for this revision.
-- Scientist feedback sent through the API is stored but no agent reads it. The document upload endpoints (`src/api/documents.py`) store PDFs, but no agent reads them and the web interface has no upload page.
-- Every match is a multi-turn debate, whereas the paper debates only top-ranked hypotheses and compares the rest in a single turn. There are no specialised-model tools such as AlphaFold.
-- `src/graphs/workflow.py` is an earlier LangGraph pipeline kept for the phase 2 and 3 tests; the supervisor does not use it.
 
 ## Tests
 

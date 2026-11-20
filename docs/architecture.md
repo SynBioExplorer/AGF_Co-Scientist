@@ -11,7 +11,7 @@ Both call `SupervisorAgent.execute` in `src/agents/supervisor.py`.
 
 ## The run loop
 
-1. The supervisor asks its model to turn the goal into evaluation criteria, domain constraints and a quality threshold. If the reply does not parse, it uses novelty, feasibility and testability.
+1. The supervisor asks its model to turn the goal into evaluation criteria, domain constraints and a quality threshold (novelty, feasibility and testability if the reply does not parse). The result is logged and not passed to any agent.
 2. It queues three generation tasks: two literature-exploration tasks and one simulated debate.
 3. Each iteration then:
    - stops if the budget is spent;
@@ -40,7 +40,7 @@ Once 85% of the time limit has passed, an iteration schedules only ranking tasks
 
 ## Scheduling
 
-Each phase gives every agent in it `max(1, int(weight × 12))` task slots. A slot is filled from the task queue or, when the queue holds nothing for that agent, by a task the supervisor creates from the current state. Work that is already queued, running or done (the same review of the same hypothesis, the same pair, the proximity graph) is not dispatched twice. At most `MAX_WORKERS` (default 4) tasks run at once.
+Each phase gives every agent in it `max(1, int(weight × 12))` task slots. A slot is filled from the task queue or, when the queue holds nothing for that agent, by a task the supervisor creates from the current state. No work (the same review of the same hypothesis, the same pair, the proximity graph) is dispatched twice in one phase, and a review or observation review that is already queued, running or stored is not dispatched again. At most `MAX_WORKERS` (default 4) tasks run at once.
 
 Base weights (`src/supervisor/statistics.py`):
 
@@ -63,7 +63,7 @@ After the seed tasks, each generation task picks a method at random: literature 
 - Literature retrieval runs for every generation task while `ENABLE_WEB_SEARCH` is on. It is cached per goal and later serves observation review.
 - Generation stops being scheduled once the pool holds 40 hypotheses (`GENERATION_POOL_CAP`).
 - A new hypothesis is compared by LLM similarity with the five highest-rated hypotheses and rejected at a score of 0.8 or more.
-- With `SAFETY_THRESHOLD` above 0, the safety agent reviews each new and evolved hypothesis, and one that scores below the threshold is set aside as `requires_safety_review`. At the default of 0 no safety review runs. The research goal itself is not screened.
+- With `SAFETY_THRESHOLD` above 0, the safety agent reviews each new and evolved hypothesis, and one that scores below the threshold is set aside as `requires_safety_review`. If the safety call fails or its reply does not parse, the hypothesis is kept unscreened. At the default of 0 no safety review runs. The research goal itself is not screened.
 
 ## Reviews
 
@@ -91,7 +91,7 @@ Elo is not an input. The research overview written after each meta-review, and t
 
 ## Tournament
 
-`src/agents/ranking.py` runs each match as a debate: in each of three turns (the API option `tournament_rounds`, 1 to 10) an advocate for each hypothesis argues for it against the other, and a final prompt that includes the transcript names the winner. A match therefore costs seven LLM calls at the default. The Elo update is the standard one, with expected score 1 / (1 + 10^((R_b − R_a) / 400)) and change K × (result − expected), K = 32 by default (the API option `elo_k_factor`, 8 to 64). All hypotheses, evolved ones included, start at 1200.
+`src/agents/ranking.py` runs each match as a debate: in each of three turns (the API option `tournament_rounds`, 1 to 10) an advocate for each hypothesis argues for it against the other, and a final prompt that includes the transcript names the winner. A match therefore costs seven LLM calls at the default. The Elo update is the standard one, with expected score 1 / (1 + 10^((R_b − R_a) / 400)) and change K × (result − expected), K = 32 by default (the API option `elo_k_factor`, 8 to 64). All hypotheses, evolved ones included, start at 1200. The debate and decision prompts show each hypothesis's current Elo rating, and the first hypothesis of a pair always argues first.
 
 A hypothesis can play once it has a review or is an evolved child. Pair selection is in `TournamentRanker.select_match_pairs` (`src/tournament/elo.py`):
 
@@ -118,7 +118,7 @@ The child is a new hypothesis with a new ID, the parent's ID as lineage, a ratin
 
 Retrieved papers are scored as 0.5 × citation score + 0.3 × recency (half-life 5 years) + 0.2 × journal score (`src/literature/quality_scorer.py`); retracted papers are left out of prompts and citations, and limitations are extracted from the retrieved papers for the prompt context (`src/literature/limitations_extractor.py`).
 
-Each citation in a generated hypothesis is checked by DOI, first against the retrieved papers and otherwise through Semantic Scholar. It is `verified` only when the paper found has a matching title; other statuses record a missing identifier (`no_identifier`), a different paper (`title_mismatch`) or no check (`not_checked`).
+Each citation in a generated hypothesis is checked by DOI, first against the retrieved papers and otherwise through Semantic Scholar. It is `verified` only when the paper found has a matching title; other statuses record a missing identifier (`no_identifier`), a different paper (`title_mismatch`), a DOI that resolves to no paper (`unresolved`), a failed lookup (`lookup_failed`) or no check (`not_checked`). A verified status confirms the paper's identity, not that it supports the hypothesis.
 
 ## Cost control
 
@@ -136,7 +136,7 @@ The tracker is a process-wide singleton saved to `data/cost_tracking.json` relat
 
 ## Storage and checkpoints
 
-`STORAGE_BACKEND` selects `memory` (the default), `postgres`, or `cached` (PostgreSQL with Redis) (`src/storage/`). A `ContextMemory` checkpoint is saved after every iteration and once more at the end. `resume_from_checkpoint` restores the context memory and explored directions but then calls `execute`, which restarts the iteration count and the seed tasks; with the in-memory back end, checkpoints do not outlive the process.
+Both entry points keep runs in memory (`AsyncStorageAdapter` in `src/storage/async_adapter.py`). `STORAGE_BACKEND` (`memory`, `postgres`, or `cached` for PostgreSQL with Redis) is read only by `get_storage` in `src/storage/factory.py`, which neither entry point calls. A `ContextMemory` checkpoint is saved after every iteration and once more at the end. `resume_from_checkpoint` restores the context memory and explored directions but then calls `execute`, which restarts the iteration count and the seed tasks; with the in-memory back end, checkpoints do not outlive the process.
 
 ## Relation to the paper
 
@@ -144,8 +144,9 @@ What follows the design of Gottweis et al. (arXiv:2502.18864): the agent set (ge
 
 Where this implementation differs:
 
+- The supervisor parses the goal into evaluation criteria, as the paper's research plan configuration does, but no agent receives the result.
 - The paper's tournament review is defined as a review type in `03_architecture/schemas.py` but never scheduled.
 - Every match is a multi-turn debate. The paper debates top-ranked hypotheses and compares lower-ranked ones in a single turn; `should_use_multi_turn` in `src/tournament/elo.py` implements that rule but is not called.
 - There are no tools that call specialised models such as AlphaFold.
-- A scientist cannot steer a run once it has started: feedback sent through the API is stored but not read by any agent, and the private document repository behind `src/api/documents.py` is not read by any agent.
+- A scientist cannot steer a run once it has started: feedback sent through the API is stored but not read by any agent, and the PDF store behind `src/api/documents.py` is not read by any agent.
 - Additions not in the paper's design: the readiness gate, DOI checks on citations, refutation search in reviews, paper quality scoring, the AUD budget with per-request reservation, and the late-run phase that schedules only matches.

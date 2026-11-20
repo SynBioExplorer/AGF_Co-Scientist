@@ -55,7 +55,7 @@ Gemini calls carry a reasoning-token budget per agent (no cap for generation, me
 
 | Variable | Default | Effect |
 |---|---|---|
-| `BUDGET_AUD` | `50.0` | Spend limit in AUD for the process (a batch file's `budget_aud` replaces it) |
+| `BUDGET_AUD` | `50.0` | Spend limit in AUD for the process (a batch file's `budget_aud` replaces it, unless the spend record below already stores a budget) |
 | `FINALIZATION_RESERVE_FRACTION` | `0.05` | Share of the budget the iteration loop leaves for the final synthesis |
 | `SUPERVISOR_MAX_EXECUTION_SECONDS` | `21600` | Run time limit |
 | `SUPERVISOR_ITERATION_TIMEOUT` | `600` | Time limit per iteration |
@@ -81,7 +81,7 @@ The spend record persists in `data/cost_tracking.json` relative to the working d
 | `DATABASE_URL` | `postgresql://localhost:5432/coscientist` | PostgreSQL connection string |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
 
-The schema is in `src/storage/schema.sql`, with index migrations in `src/storage/migrations/`.
+Only `get_storage` in `src/storage/factory.py` reads `STORAGE_BACKEND`, and neither `scripts/run_batch.py` nor `src/api/main.py` calls it: both keep runs in memory. The schema is in `src/storage/schema.sql`, with index migrations in `src/storage/migrations/`.
 
 ## Batch files
 
@@ -114,7 +114,7 @@ goals:
 | `enable_evolution`, `enable_web_search` | | No; the supervisor reads `ENABLE_EVOLUTION` and `ENABLE_WEB_SEARCH` |
 | `llm_provider`, `default_model`, `default_temperature`, `agent_models` | | No |
 
-The `X-LLM-Provider` request header switches the provider for the duration of a request and accepts `google` or `openai`. `PUT /settings` saves the web interface's preferences to `03_architecture/.runtime_settings.json`; only `GET /settings` reads that file back.
+The `X-LLM-Provider` request header switches the provider for the duration of a request and accepts `google` or `openai`. A run started by `POST /goals` outlives that request, and agents it creates afterwards use the server's `LLM_PROVIDER` and keys. `PUT /settings` saves the web interface's preferences to `03_architecture/.runtime_settings.json`; only `GET /settings` reads that file back.
 
 ## Entries in `.env.example` that the code does not read
 

@@ -26,5 +26,5 @@ Vite serves the interface at http://localhost:5173. It calls the API at `http://
 
 ## Caveats
 
-- API keys entered on the settings page are kept in the browser's localStorage and sent to the API as request headers.
+- API keys entered on the settings page are kept in the browser's localStorage and sent to the API as request headers. The API applies them, and the chosen provider, only while it handles each request, so a run started here can end up using the keys and `LLM_PROVIDER` in the server's `.env`.
 - The settings page offers Gemini and OpenAI only. Its per-agent model choices are sent with each goal, but the API does not apply them; set per-agent models and Bedrock on the server instead ([configuration](../docs/configuration.md)).
