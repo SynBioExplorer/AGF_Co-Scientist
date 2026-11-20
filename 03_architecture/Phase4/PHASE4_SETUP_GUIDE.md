@@ -25,7 +25,7 @@ Run from your main repository:
 
 ```bash
 # Navigate to main repo
-cd "/Users/felix/Library/CloudStorage/OneDrive-SharedLibraries-MacquarieUniversity/Australian Genome Foundry - AWS cloud infrastructure/12_AI_Co-scientist/Google co-scientist"
+cd "<repo>"
 
 # Ensure you're on main and up to date
 git checkout main
@@ -49,11 +49,11 @@ git worktree list
 
 You should see:
 ```
-/Users/.../Google co-scientist            main
-/Users/.../worktree-database              phase4/database
-/Users/.../worktree-supervisor            phase4/supervisor
-/Users/.../worktree-safety                phase4/safety
-/Users/.../worktree-api                   phase4/api
+<repo>                                    main
+<repo>/../worktree-database               phase4/database
+<repo>/../worktree-supervisor             phase4/supervisor
+<repo>/../worktree-safety                 phase4/safety
+<repo>/../worktree-api                    phase4/api
 ```
 
 ### 2. Copy Instruction Files (2 minutes)
@@ -66,10 +66,10 @@ cp PHASE4_AGENT_SAFETY.md ../worktree-safety/
 cp PHASE4_AGENT_API.md ../worktree-api/
 
 # Copy the main plan for reference
-cp /Users/felix/.claude/plans/memoized-booping-allen.md ../worktree-database/PHASE4_PLAN.md
-cp /Users/felix/.claude/plans/memoized-booping-allen.md ../worktree-supervisor/PHASE4_PLAN.md
-cp /Users/felix/.claude/plans/memoized-booping-allen.md ../worktree-safety/PHASE4_PLAN.md
-cp /Users/felix/.claude/plans/memoized-booping-allen.md ../worktree-api/PHASE4_PLAN.md
+cp <plan-file> ../worktree-database/PHASE4_PLAN.md
+cp <plan-file> ../worktree-supervisor/PHASE4_PLAN.md
+cp <plan-file> ../worktree-safety/PHASE4_PLAN.md
+cp <plan-file> ../worktree-api/PHASE4_PLAN.md
 ```
 
 ### 3. Spawn Claude Code Instances (5 minutes)

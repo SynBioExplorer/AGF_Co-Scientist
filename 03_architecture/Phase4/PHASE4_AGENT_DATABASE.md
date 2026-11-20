@@ -856,7 +856,7 @@ git push origin phase4/database
 ## Questions?
 
 Reference:
-- Main plan: `/Users/.../PHASE4_PARALLEL_WORKFLOW.md`
+- Main plan: `<repo>/03_architecture/Phase4/PHASE4_PARALLEL_WORKFLOW.md`
 - Data models: `03_architecture/schemas.py`
 - Existing storage: `src/storage/memory.py`
 

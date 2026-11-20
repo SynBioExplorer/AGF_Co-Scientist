@@ -233,7 +233,7 @@ class Settings(BaseSettings):
 
 - Check **[PHASE4_PARALLEL_WORKFLOW.md](PHASE4_PARALLEL_WORKFLOW.md)** for detailed workflow
 - Check agent-specific instruction files for implementation details
-- Review main plan: `/Users/felix/.claude/plans/memoized-booping-allen.md`
+- Review main plan: `<plan-file>`
 
 ---
 
