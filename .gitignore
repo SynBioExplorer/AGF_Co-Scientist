@@ -54,6 +54,7 @@ data/
 *.sqlite
 chroma/
 .chroma/
+chroma_db/
 
 # Logs
 logs/
@@ -67,3 +68,10 @@ htmlcov/
 
 # Node packages installed at the repository root (frontend/ ignores its own)
 /node_modules/
+
+# Private deployment files, kept out when syncing from the deployed version
+/scripts/aws_entrypoint.py
+/cloudformation/
+/buildspec.yml
+/Dockerfile
+/lambdas/
