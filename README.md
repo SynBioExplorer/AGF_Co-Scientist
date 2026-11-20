@@ -48,7 +48,7 @@ Reference detail on scheduling, reviews, the tournament and cost control is in [
 | Evolution | Refines one of the five highest-rated hypotheses with one of seven strategies. The result is a new hypothesis with its own reviews. | `src/agents/evolution.py` |
 | Proximity | LLM-scored similarity graph and clusters, used for tournament pairing. | `src/agents/proximity.py` |
 | Meta-review | Recurring strengths and weaknesses, fed into later prompts, and the research overview. | `src/agents/meta_review.py` |
-| Safety | Optional screen of each new hypothesis. Off by default. | `src/agents/safety.py` |
+| Safety | Optional screen of each new and evolved hypothesis. Off by default. | `src/agents/safety.py` |
 | Supervisor | Task queue, agent weights, stop conditions and checkpoints. | `src/agents/supervisor.py`, `src/supervisor/` |
 
 **Tournament.** Elo starts at 1200 with K = 32; the API accepts both the K-factor and the number of debate turns per run. Evolved hypotheses start at 1200 and do not inherit their parent's rating. Once a proximity graph exists, pairing gives up to 30% of matches to hypotheses that have not played yet and mixes within-cluster, cross-cluster and top-ranked pairs for the rest.
@@ -59,7 +59,7 @@ Reference detail on scheduling, reviews, the tournament and cost control is in [
 
 **Cost and budget.** Each LLM call reserves its worst-case cost, at the prices in `04_Scripts/cost_tracker.py`, against an AUD budget (default 50 AUD) before it is sent, and a model without a configured price is refused. The loop keeps 5% of the budget for the final meta-review, overview and report.
 
-**LLM providers.** Google Gemini (the default), OpenAI and AWS Bedrock (`src/llm/`). Bedrock calls go through the Converse API with the standard AWS credential chain; by default Claude Opus 4.8 serves generation, evolution and meta-review and Claude Sonnet 5 the other agents. Each of the six main agents can be given its own provider and model.
+**LLM providers.** Google Gemini (the default), OpenAI and AWS Bedrock (`src/llm/`). Bedrock calls go through the Converse API with the standard AWS credential chain; by default Claude Opus 4.8 serves generation, evolution and meta-review and Claude Sonnet 5 the other agents. Each of the six main agents can be given its own provider and model through environment variables.
 
 **API.** A FastAPI app (`src/api/main.py`) to submit a goal with per-run options, poll its status, list and inspect hypotheses with their reviews and match records, send feedback, and chat about a goal. Runs execute as background tasks inside the server process.
 
@@ -69,7 +69,7 @@ Reference detail on scheduling, reviews, the tournament and cost control is in [
 
 ## Quick start
 
-Requirements: conda, and an API key for Gemini or OpenAI, or AWS credentials with Bedrock model access. Run the commands from the repository root: `03_architecture/.env` and the spend record in `data/` are looked up relative to the working directory.
+Requirements: conda, and either an API key for Gemini or OpenAI or AWS credentials with Bedrock model access. Run the commands from the repository root: `03_architecture/.env` and the spend record in `data/` are looked up relative to the working directory.
 
 ```bash
 git clone https://github.com/SynBioExplorer/AGF_Co-Scientist.git
@@ -81,7 +81,8 @@ cp 03_architecture/.env.example 03_architecture/.env
 
 Edit `03_architecture/.env` before the first run:
 
-- Set `GOOGLE_API_KEY`. `src/config.py` refuses to load without it, whichever provider you use.
+- Keep a `GOOGLE_API_KEY` line: `src/config.py` refuses to load without one, whichever provider you use. With Gemini it must be a real key; with OpenAI or Bedrock the placeholder is enough.
+- Delete the placeholder lines for the other keys you do not have.
 - Set `LANGCHAIN_TRACING_V2=false` unless you have a LangSmith key.
 - The example pins model names that differ from the defaults in `src/config.py`; delete the `GOOGLE_*_MODEL` and `OPENAI_*_MODEL` lines to use the defaults.
 
@@ -125,14 +126,14 @@ Per-agent overrides, Bedrock inference profiles, literature keys, storage back e
 ## Limitations and security
 
 - Hypotheses are LLM output. Elo measures pairwise preference between model-written ideas, not correctness, and a hypothesis marked ready has passed automated checks, not experiments. Everything needs expert review.
-- The safety screen is off by default (`SAFETY_THRESHOLD=0.0`), so neither goals nor hypotheses are screened for dual-use or biosafety risk unless you switch it on.
+- The safety screen for dual-use and biosafety risk is off by default (`SAFETY_THRESHOLD=0.0`). Switched on, it reviews each new and evolved hypothesis; the research goal itself is never screened.
 - The API has no authentication. CORS allows any origin with credentials, so any web page open in the same browser can call a running server. API keys sent as request headers are written into the process-wide environment for the duration of the request. Run it on your own machine only.
 - The web interface keeps API keys in the browser's localStorage. Its per-agent model choices are accepted by the API but not applied, and it offers only Gemini and OpenAI; use the environment variables for Bedrock and per-agent models.
 - Spend is saved to `data/cost_tracking.json` and reloaded by the next run started from the same directory, stored budget included. Delete that file to start a fresh budget. Prices in `04_Scripts/cost_tracker.py` are fixed in code and convert from USD at a fixed 1.55.
 - Bedrock needs your own AWS account with access to the chosen models, and the default Claude models are invoked through Australian (`au.`) inference profiles.
 - Storage is in memory by default, so API results are lost when the server stops. PostgreSQL and Redis back ends exist (`src/storage/`) but were not tested for this revision.
 - Scientist feedback sent through the API is stored but no agent reads it. The document upload endpoints (`src/api/documents.py`) store PDFs, but no agent reads them and the web interface has no upload page.
-- Each match is a multi-turn debate, where the paper debates only top-ranked hypotheses, and there are no specialised-model tools such as AlphaFold.
+- Every match is a multi-turn debate, whereas the paper debates only top-ranked hypotheses and compares the rest in a single turn. There are no specialised-model tools such as AlphaFold.
 - `src/graphs/workflow.py` is an earlier LangGraph pipeline kept for the phase 2 and 3 tests; the supervisor does not use it.
 
 ## Tests

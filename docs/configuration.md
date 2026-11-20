@@ -42,7 +42,7 @@ Gemini calls carry a reasoning-token budget per agent (no cap for generation, me
 
 | Variable | Needed for |
 |---|---|
-| `GOOGLE_API_KEY` | Always: `src/config.py` will not load without it, whichever provider you use |
+| `GOOGLE_API_KEY` | Always: `src/config.py` will not load without it, whichever provider you use; with OpenAI or Bedrock any placeholder value will do |
 | `OPENAI_API_KEY` | `LLM_PROVIDER=openai` or an OpenAI override |
 | `TAVILY_API_KEY` | Web search fallback when PubMed and Semantic Scholar return nothing |
 | `PUBMED_API_KEY` | Optional; raises the PubMed rate limit from 3 to 10 requests per second |

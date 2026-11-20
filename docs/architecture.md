@@ -63,7 +63,7 @@ After the seed tasks, each generation task picks a method at random: literature 
 - Literature retrieval runs for every generation task while `ENABLE_WEB_SEARCH` is on. It is cached per goal and later serves observation review.
 - Generation stops being scheduled once the pool holds 40 hypotheses (`GENERATION_POOL_CAP`).
 - A new hypothesis is compared by LLM similarity with the five highest-rated hypotheses and rejected at a score of 0.8 or more.
-- With `SAFETY_THRESHOLD` above 0, the safety agent reviews each new and evolved hypothesis, and one that fails is set aside as `requires_safety_review`. At the default of 0 no safety review runs.
+- With `SAFETY_THRESHOLD` above 0, the safety agent reviews each new and evolved hypothesis, and one that scores below the threshold is set aside as `requires_safety_review`. At the default of 0 no safety review runs. The research goal itself is not screened.
 
 ## Reviews
 
