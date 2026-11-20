@@ -58,3 +58,6 @@ logs/
 .coverage
 htmlcov/
 /.worktrees/
+
+# Node packages installed at the repository root (frontend/ ignores its own)
+/node_modules/
